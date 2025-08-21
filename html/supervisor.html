@@ -330,6 +330,14 @@
       document.getElementById("authStatus").textContent = "";
     }
 
+    const DAY_KEYS = ["mon","tue","wed","thu","fri","sat","sun"];
+    const DAY_LABELS = { mon:"Mon", tue:"Tue", wed:"Wed", thu:"Thu", fri:"Fri", sat:"Sat", sun:"Sun" };
+
+    function shortToKey(shortName) { // "Mon" -> "mon"
+      return shortName.toLowerCase().slice(0,3);
+    }
+
+
     // Refactor map click handler for enabling/disabling
     function onMapClick(e) {
       const radius = parseInt(document.getElementById("radiusInput").value);
@@ -425,55 +433,58 @@
         const scheduleDetails = document.getElementById("scheduleDetails");
         if (scheduleDoc.exists) {
           const schedule = scheduleDoc.data();
-          const startTime = schedule.startTime || "N/A";
-          const endTime = schedule.endTime || "N/A";
-          const startDate = schedule.startDate || "N/A";
-          const endDate = schedule.endDate || "N/A";
-          const allowedDays = schedule.allowedDays || [];
+          const { startDate, endDate, startTime, endTime, allowedDays = [], dayTimes = {}, scheduleType = "unified" } = schedule;
 
-          function calculateInternshipHours(schedule,) {
-            const { startDate, endDate, startTime, endTime } = schedule;
-            if (!startDate || !endDate || !startTime || !endTime) return 0;
-
-            // Build dates safely at local midnight
-            const start = new Date(`${startDate}T00:00:00`);
-            const end = new Date(`${endDate}T00:00:00`);
-            if (isNaN(start) || isNaN(end) || end < start) return 0;
-
-            // Parse times
-            const [sh, sm] = startTime.split(":").map(Number);
-            const [eh, em] = endTime.split(":").map(Number);
-            if ([sh, sm, eh, em].some(n => Number.isNaN(n))) return 0;
-
-            // Hours per valid day (handle overnight just in case)
-            let dailyHours = (eh + em / 60) - (sh + sm / 60);
-            if (dailyHours < 0) dailyHours += 24;
-
-            // Normalize allowedDays: allow "Mon"/"Tue" *or* "Monday"/"Tuesday"
-            const allowed = (schedule.allowedDays && schedule.allowedDays.length)
-              ? new Set(schedule.allowedDays.map(d => d.slice(0, 3))) // "Mon"
-              : null; // null => all days allowed
-
-            let totalHours = 0;
-
-            // Count only allowed days; compare using weekday 'short' ("Mon")
-            for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-              const wdShort = d.toLocaleDateString('en-US', { weekday: 'short' }); // "Mon"
-              if (!allowed || allowed.has(wdShort)) {
-                totalHours += dailyHours;
+          // Build a readable day-times string
+          let dayLines = [];
+          if (Object.keys(dayTimes).length) {
+            DAY_KEYS.forEach(k => {
+              if (allowedDays.includes(k) && dayTimes[k]) {
+                const { start, end } = dayTimes[k];
+                dayLines.push(`${DAY_LABELS[k]}: ${start} - ${end}`);
               }
-            }
-
-            return totalHours;
+            });
+          } else if (startTime && endTime && allowedDays.length) {
+            // fallback for old docs
+            allowedDays.forEach(k => dayLines.push(`${DAY_LABELS[k]}: ${startTime} - ${endTime}`));
           }
 
-          const internshipHours = calculateInternshipHours(schedule);
+          // internship hours calculation (day-aware)
+          function calcHoursByDayRange(s) {
+            if (!s.startDate || !s.endDate) return 0;
+            const start = new Date(`${s.startDate}T00:00:00`);
+            const end   = new Date(`${s.endDate}T00:00:00`);
+            if (isNaN(start) || isNaN(end) || end < start) return 0;
+
+            let total = 0;
+            for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+              const weekdayShort = d.toLocaleDateString('en-US', { weekday: 'short' }); // "Mon"
+              const key = shortToKey(weekdayShort);                                     // "mon"
+              if (!s.allowedDays || !s.allowedDays.length || s.allowedDays.includes(key)) {
+                let st = s.dayTimes?.[key]?.start || s.startTime;
+                let et = s.dayTimes?.[key]?.end   || s.endTime;
+                if (!st || !et) continue;
+
+                const [sh, sm] = st.split(":").map(Number);
+                const [eh, em] = et.split(":").map(Number);
+                if ([sh, sm, eh, em].some(n => Number.isNaN(n))) continue;
+
+                let daily = (eh + em / 60) - (sh + sm / 60);
+                if (daily < 0) daily += 24; // support overnight, just in case
+                total += daily;
+              }
+            }
+            return total;
+          }
+
+          const internshipHours = calcHoursByDayRange({ startDate, endDate, startTime, endTime, allowedDays, dayTimes });
 
           scheduleDetails.innerHTML = `
             <div>
-              <strong>Date Range:</strong> ${startDate} - ${endDate}<br>
-              <strong>Time:</strong> ${startTime} - ${endTime}<br>
-              <strong>Days:</strong> ${allowedDays.length ? allowedDays.join(", ") : "N/A"}
+              <strong>Type:</strong> ${scheduleType === 'custom' ? 'Custom (per day)' : 'Same for All Days'}<br>
+              <strong>Date Range:</strong> ${startDate || 'N/A'} - ${endDate || 'N/A'}<br>
+              <strong>Days & Times:</strong><br>
+              <div class="mt-1 text-sm">${dayLines.length ? dayLines.join("<br>") : "N/A"}</div>
               <br><strong>Total Hours:</strong> ${internshipHours.toFixed(2)} hrs
             </div>
           `;
@@ -482,6 +493,7 @@
         }
       });
 
+      // Load interns and compute presence status against the correct day's times
       db.collection("interns").where("supervisorEmail", "==", email).get().then(snapshot => {
         console.log("Intern query result size:", snapshot.size);
         internList.innerHTML = "";
@@ -489,10 +501,10 @@
           internList.innerHTML = "<p class='text-sm text-gray-500'>No interns assigned.</p>";
           return;
         }
-        snapshot.forEach(doc => {
-          const intern = doc.data();
-          console.log("Intern found:", intern);
-          const internId = doc.id;
+
+        snapshot.forEach(docSnap => {
+          const intern = docSnap.data();
+          const internId = docSnap.id;
 
           db.collection("interns_inside").doc(internId).get().then(presenceDoc => {
             let statusText = "";
@@ -501,53 +513,66 @@
 
             if (presenceDoc.exists) {
               const data = presenceDoc.data();
-              // store timeIn and timeOut as Firestore Timestamps
-              const timeIn = data.timeIn ? data.timeIn.toDate() : null;
+              const timeIn  = data.timeIn  ? data.timeIn.toDate()  : null;
               const timeOut = data.timeOut ? data.timeOut.toDate() : null;
               const timedIn = data.timedIn || false;
 
-              // Get schedule for this intern's supervisor
               db.collection("schedules").doc(email).get().then(scheduleDoc => {
                 if (scheduleDoc.exists && timeIn && timeOut) {
-                  const schedule = scheduleDoc.data();
-                  const startTime = schedule.startTime || "00:00";
-                  const endTime = schedule.endTime || "23:59";
-                  // Convert schedule times to Date objects for today
-                  const today = new Date(timeIn);
-                  const [startHour, startMin] = startTime.split(":").map(Number);
-                  const [endHour, endMin] = endTime.split(":").map(Number);
+                  const s = scheduleDoc.data();
+                  const allowed = s.allowedDays || [];
+                  const dt = s.dayTimes || {};
+                  const wdShort = timeIn.toLocaleDateString('en-US', { weekday: 'short' }); // "Mon"
+                  const key = shortToKey(wdShort); // "mon"
 
-                  const schedStart = new Date(today);
-                  schedStart.setHours(startHour, startMin, 0, 0);
-                  const schedEnd = new Date(today);
-                  schedEnd.setHours(endHour, endMin, 0, 0);
+                  // Decide which times apply
+                  let st = (dt[key]?.start) || s.startTime;
+                  let et = (dt[key]?.end)   || s.endTime;
 
-                  if (timeOut < schedEnd) {
-                    // Undertime
-                    const diffMs = schedEnd - timeOut;
-                    const diffMin = Math.round(diffMs / 60000);
-                    statusText = `⏰ Undertime (${diffMin} min left)`;
-                    statusClass = "text-yellow-600";
-                    extraInfo = `<br><span class='text-xs text-gray-500'>Time Out: ${timeOut.toLocaleTimeString()}</span>`;
-                  } else if (timeOut > schedEnd) {
-                    // Overtime
-                    const diffMs = timeOut - schedEnd;
-                    const diffMin = Math.round(diffMs / 60000);
-                    statusText = `⏱️ Overtime (${diffMin} min extra)`;
-                    statusClass = "text-green-600";
-                    extraInfo = `<br><span class='text-xs text-gray-500'>Time Out: ${timeOut.toLocaleTimeString()}</span>`;
+                  if (allowed.length && !allowed.includes(key)) {
+                    // Not a scheduled day → treat as outside schedule
+                    st = null; et = null;
+                  }
+
+                  if (st && et) {
+                    const [sh, sm] = st.split(":").map(Number);
+                    const [eh, em] = et.split(":").map(Number);
+
+                    const schedStart = new Date(timeIn);
+                    schedStart.setHours(sh || 0, sm || 0, 0, 0);
+
+                    const schedEnd = new Date(timeIn);
+                    schedEnd.setHours(eh || 0, em || 0, 0, 0);
+                    if (schedEnd < schedStart) schedEnd.setDate(schedEnd.getDate() + 1); // overnight safeguard
+
+                    if (timeOut < schedEnd) {
+                      const diffMin = Math.round((schedEnd - timeOut) / 60000);
+                      statusText = `⏰ Undertime (${diffMin} min left)`;
+                      statusClass = "text-yellow-600";
+                      extraInfo = `<br><span class='text-xs text-gray-500'>Time Out: ${timeOut.toLocaleTimeString()}</span>`;
+                    } else if (timeOut > schedEnd) {
+                      const diffMin = Math.round((timeOut - schedEnd) / 60000);
+                      statusText = `⏱️ Overtime (${diffMin} min extra)`;
+                      statusClass = "text-green-600";
+                      extraInfo = `<br><span class='text-xs text-gray-500'>Time Out: ${timeOut.toLocaleTimeString()}</span>`;
+                    } else {
+                      statusText = `✔️ On time`;
+                      statusClass = "text-green-600";
+                    }
+                  } else {
+                    statusText = `ℹ️ No schedule for ${DAY_LABELS[key]}`;
+                    statusClass = "text-gray-600";
                   }
                 }
 
-                // Add timed in status
                 const timedInStatus = timedIn ? "✅ Timed In" : "❌ Not Timed In";
                 const timedInClass = timedIn ? "text-green-600" : "text-red-600";
 
                 internList.innerHTML += `
                   <li class="bg-gray-50 rounded-lg shadow p-4 flex justify-between items-center">
                     <div>
-                      <h3 class="text-lg font-semibold">${intern.name}</h3>
-                      <p class="text-sm text-gray-500">${intern.email}</p>
+                      <h3 class="text-lg font-semibold">${intern.name || "Unnamed Intern"}</h3>
+                      <p class="text-sm text-gray-500">${intern.email || ""}</p>
                       <p class="text-sm ${statusClass} font-medium mt-1">${statusText}</p>
                       <p class="text-sm ${timedInClass} font-medium mt-1">${timedInStatus}</p>
                       ${extraInfo}
@@ -562,9 +587,8 @@
               internList.innerHTML += `
                 <li class="bg-gray-50 rounded-lg shadow p-4 flex justify-between items-center">
                   <div>
-                    <h3 class="text-lg font-semibold">${intern.name}</h3>
-                    <p class="text-sm text-gray-500">${intern.email}</p>
-                    <p class="text-sm ${statusClass} font-medium mt-1">${statusText}</p>
+                    <h3 class="text-lg font-semibold">${intern.name || "Unnamed Intern"}</h3>
+                    <p class="text-sm text-gray-500">${intern.email || ""}</p>
                     <p class="text-sm text-red-600 font-medium mt-1">❌ Not Timed In</p>
                   </div>
                 </li>
@@ -587,81 +611,113 @@
       document.getElementById("editScheduleBtn").style.display = "none";
     }
 
+    let globalType = "unified";
+
     function toggleScheduleType(type) {
+      globalType = type;
       document.getElementById('unifiedTimeFields').classList.toggle('hidden', type !== 'unified');
       document.getElementById('customScheduleFields').classList.toggle('hidden', type !== 'custom');
+      if (type === 'custom') toggleCustomDays();
     }
 
     function toggleCustomDays() {
-
-      const checkedDays = Array.from(document.querySelectorAll(".dayCheckbox:checked")).map(cb => cb.value);
-
-      // Loop through all days
-      ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].forEach(day => {
-        // Show if in checkedDays, otherwise hide
-        document.getElementById(day).classList.toggle('hidden', !checkedDays.includes(day.toLowerCase()));
-      });
+      if (globalType === 'custom') {
+        const checked = new Set(Array.from(document.querySelectorAll(".dayCheckbox:checked")).map(cb => cb.value));
+        ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].forEach(label => {
+          const el = document.getElementById(label);
+          if (el) el.classList.toggle("hidden", !checked.has(label.toLowerCase()));
+        });
+      }
     }
 
-    function saveSchedule() {
-      const email = auth.currentUser.email;
-      const startTime = document.getElementById("startTime").value;
-      const endTime = document.getElementById("endTime").value;
-      const startDate = document.getElementById("startDate").value;
-      const endDate = document.getElementById("endDate").value;
-      const checkboxes = document.querySelectorAll(".dayCheckbox");
-      const allowedDays = Array.from(document.querySelectorAll(".dayCheckbox:checked")).map(cb => cb.value);
-
-      allowedDays.foreach(day => {
-        const section = document.getElementById(day);
-        if (section) {
-          section.classList.toggle('hidden', id !== day);
-        }
-      });
-
-      if (!startTime || !endTime || !startDate || !endDate || allowedDays.length === 0) {
-        return alert("⚠️ Please fill in all fields.");
+    async function saveSchedule() {
+      const email = auth.currentUser?.email;
+      if (!email) {
+        alert("Not authenticated.");
+        return;
       }
 
-      db.collection("schedules").doc(email).set({
-        startTime,
-        endTime,
+      const scheduleType = document.querySelector('input[name="scheduleType"]:checked')?.value || 'unified';
+      const startDate = document.getElementById("startDate").value;
+      const endDate   = document.getElementById("endDate").value;
+
+      // selected days: ["mon","tue",...]
+      const allowedDays = Array.from(document.querySelectorAll(".dayCheckbox:checked")).map(cb => cb.value);
+
+      // Basic checks BEFORE write
+      if (!startDate || !endDate) return alert("⚠️ Please select start and end dates.");
+      if (new Date(endDate) < new Date(startDate)) return alert("⚠️ End date cannot be earlier than start date.");
+      if (!allowedDays.length) return alert("⚠️ Please pick at least one allowed day.");
+
+      // Build dayTimes object
+      const dayTimes = {};
+      let unifiedStart = null, unifiedEnd = null;
+
+      if (scheduleType === 'unified') {
+        unifiedStart = document.getElementById("startTime").value;
+        unifiedEnd   = document.getElementById("endTime").value;
+        if (!unifiedStart || !unifiedEnd) return alert("⚠️ Please enter Start/End time.");
+
+        // Same time for all allowed days
+        allowedDays.forEach(d => { dayTimes[d] = { start: unifiedStart, end: unifiedEnd }; });
+
+      } else {
+        // custom per-day
+        for (const d of allowedDays) {
+          const start = document.getElementById(`${d}Start`)?.value || "";
+          const end   = document.getElementById(`${d}End`)?.value || "";
+          if (!start || !end) {
+            return alert(`⚠️ Missing time for ${DAY_LABELS[d]} (start and end required).`);
+          }
+          dayTimes[d] = { start, end };
+        }
+      }
+
+      // Prepare payload
+      const payload = {
+        scheduleType,           // "unified" | "custom"
         startDate,
         endDate,
-        allowedDays,
+        allowedDays,            // ["mon","tue",...]
+        startTime: unifiedStart, // keep for backward compatibility (null for custom)
+        endTime: unifiedEnd,     // keep for backward compatibility (null for custom)
+        dayTimes,                // { mon:{start,end}, ... } only for allowed days
         supervisorEmail: email,
-        updatedAt: new Date()
-      }).then(() => {
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      };
+
+      try {
+        await db.collection("schedules").doc(email).delete();
+
+        await db.collection("schedules").doc(email).set(payload, { merge: true });
         alert("✅ Schedule saved successfully.");
         document.getElementById("scheduleFormFields").style.display = "none";
         document.getElementById("saveScheduleBtn").style.display = "none";
         document.getElementById("editScheduleBtn").style.display = "";
-      }).catch(err => {
+        // Refresh schedule panel after save
+        loadInterns();
+      } catch (err) {
         console.error("Error saving schedule:", err);
         alert("❌ Error saving schedule. Please try again.");
-      });
-
-      if (new Date(endDate) < new Date(startDate)) {
-        return alert("⚠️ End date cannot be earlier than start date.");
       }
-
-      // Prevent selecting an end date earlier than start date
-      document.addEventListener("DOMContentLoaded", () => {
-        const startDateInput = document.getElementById("startDate");
-        const endDateInput = document.getElementById("endDate");
-
-        startDateInput.addEventListener("change", () => {
-          endDateInput.min = startDateInput.value;
-        });
-
-        endDateInput.addEventListener("change", () => {
-          if (endDateInput.value < startDateInput.value) {
-            alert("⚠️ End date cannot be earlier than start date.");
-            endDateInput.value = "";
-          }
-        });
-      });
     }
+
+    // Prevent selecting an end date earlier than start date
+    document.addEventListener("DOMContentLoaded", () => {
+      const startDateInput = document.getElementById("startDate");
+      const endDateInput = document.getElementById("endDate");
+
+      startDateInput.addEventListener("change", () => {
+        endDateInput.min = startDateInput.value;
+      });
+
+      endDateInput.addEventListener("change", () => {
+        if (endDateInput.value < startDateInput.value) {
+          alert("⚠️ End date cannot be earlier than start date." . startDateInput.value);
+          endDateInput.value = "";
+        }
+      });
+    });
 
     function supervisorLogout() {
       auth.signOut().then(() => {
