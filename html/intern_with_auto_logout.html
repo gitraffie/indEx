@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Intern Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    #map { height: 256px; }
+  </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+  <!-- Loading Spinner -->
+  <div id="loadingScreen" class="fixed inset-0 bg-white flex items-center justify-center z-50 transition-opacity duration-300 opacity-100">
+    <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-600"></div>
+  </div>
+
+  <!-- Confirm Login Modal -->
+  <div id="confirmModal" style="display: none" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+    <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
+      <h2 class="text-xl font-bold mb-4 text-center">Confirm Login</h2>
+      <p class="text-center mb-4">Logged in as <strong id="loggedInEmail"></strong></p>
+      <button onclick="proceedToDashboard()" class="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700 mb-2">✅ Continue</button>
+      <button onclick="logoutAndReset()" class="w-full bg-gray-500 text-white py-2 rounded hover:bg-gray-600">🔄 Use Different Account</button>
+    </div>
+  </div>
+
+  <!-- Auth Modal -->
+  <div id="authModal" style="display: none" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
+      <h2 id="modalTitle" class="text-xl font-bold mb-4 text-center">Intern Login</h2>
+
+      <input id="email" type="email" placeholder="Email" class="w-full px-3 py-2 border rounded mb-3 rounded-3xl">
+      <input id="password" type="password" placeholder="Password" class="w-full px-3 py-2 border rounded mb-3 rounded-3xl">
+
+      <div id="extraFields" class="hidden">
+        <input id="fullName" type="text" placeholder="Full Name" class="w-full px-3 py-2 border rounded mb-3">
+        <input id="school" type="text" placeholder="School Name" class="w-full px-3 py-2 border rounded mb-3">
+        <input id="supervisorEmail" type="email" placeholder="Supervisor Email" class="w-full px-3 py-2 border rounded mb-3">
+        <input id="coordinatorCodeInput" type="text" placeholder="Coordinator Code" class="w-full px-3 py-2 border rounded mb-3">
+      </div>
+
+      <div class="grid grid-cols-3 gap-3 items-center">
+        <div class="col-span-2 px-5">
+          <label class="inline-flex items-center">
+            <input type="checkbox" id="remember" name="remember" class="form-checkbox h-4 w-4 text-blue-600">
+            <span class="ml-2 text-sm text-gray-700">Remember Me</span>
+          </label>
+        </div>
+
+        <div class="grid-span-1">
+          <button id="authButton" onclick="authAction()" class="w-full bg-blue-600 text-white py-2 px-4 rounded-3xl hover:bg-blue-700 transition">
+            Log In
+          </button>
+        </div>
+      </div>
+      <p id="authStatus" class="text-sm mt-2 text-center text-red-600"></p>
+      <p class="text-sm text-center mt-4">
+        <span id="togglePrompt">Don't have an account?</span>
+        <button onclick="toggleAuthMode()" class="text-blue-600 hover:underline" id="toggleMode">Register here</button>
+      </p>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="max-w-2xl mx-auto px-4 py-8" id="mainContent" style="display:none">
+    <h1 class="text-2xl font-bold mb-4 text-center">Intern Dashboard</h1>
+    <div class="bg-white shadow rounded-lg p-6 mb-6">
+      <h2 class="text-lg font-semibold mb-2">Supervisor Information</h2>
+      <p><strong>Name:</strong> <span id="supervisorName">Loading...</span></p>
+      <p><strong>Company:</strong> <span id="supervisorCompany">Loading...</span></p>
+      <p><strong>Geofence Center:</strong> <span id="geofenceCoords">Loading...</span></p>
+
+      <div class="bg-white shadow rounded-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold mb-4">🗓️ Your Schedule</h2>
+        <ul id="scheduleList" class="space-y-4">
+          <li class="text-gray-500">Loading schedule...</li>
+        </ul>
+      </div>
+    </div>
+    <div id="map" class="h-64 rounded-xl shadow mb-4"></div>
+    <div class="flex justify-center mb-4">
+      <button onclick="checkGeofence()" class="bg-blue-600 text-white px-6 py-2 rounded-lg shadow hover:bg-blue-700 transition">
+        Time In
+      </button>
+      <button onclick="timeOut()" class="bg-red-600 text-white px-6 py-2 rounded-lg shadow hover:bg-red-700 transition ml-4">
+        Time Out
+      </button>
+    </div>
+    <p id="result" class="text-center text-lg font-semibold text-gray-800"></p>
+
+    <div class="bg-white shadow rounded-lg p-6 mb-6">
+      <h2 class="text-lg font-semibold mb-4">📚 Tasks from Your Coordinator</h2>
+      <ul id="taskList" class="space-y-4">
+        <li class="text-gray-500">Loading tasks...</li>
+      </ul>
+    </div>
+
+    <button onclick="logout()" class="bg-red-600 text-white px-4 py-2 rounded-lg shadow hover:bg-red-700 transition">Logout</button>
+
+  </div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyDaCCFqs7cwKMiicnlP2Ig3s-WHw8gyZts",
+      authDomain: "index-database-d00f9.firebaseapp.com",
+      projectId: "index-database-d00f9",
+      storageBucket: "index-database-d00f9.firebasestorage.app",
+      messagingSenderId: "310780304431",
+      appId: "1:310780304431:web:18c2fdd5ab6405e80dfada"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    let isRegisterMode = false;
+    let currentIntern = null;
+    let geofenceCenter = null;
+    let geofenceRadius = 100;
+    let map, internMarker, geofenceCircle;
+    let justLoggedIn = false;
+
+    // Move this to the top-level scope so it's not re-created
+    let mapInitialized = false;
+
+    function toggleAuthMode() {
+      isRegisterMode = !isRegisterMode;
+      document.getElementById("modalTitle").textContent = isRegisterMode ? "Intern Registration" : "Intern Login";
+      document.getElementById("authButton").textContent = isRegisterMode ? "📝 Register" : "🔐 Log In";
+      document.getElementById("togglePrompt").textContent = isRegisterMode ? "Already have an account?" : "Don't have an account?";
+      document.getElementById("toggleMode").textContent = isRegisterMode ? "Log in here" : "Register here";        document.getElementById("extraFields").classList.toggle("hidden", !isRegisterMode);
+      document.getElementById("authStatus").textContent = "";
+    }
+
+    async function authAction() {
+      const email = document.getElementById("email").value;
+      const password = document.getElementById("password").value;
+      const fullName = document.getElementById("fullName").value;
+      const school = document.getElementById("school").value;
+      const supervisorEmail = document.getElementById("supervisorEmail").value;
+      const code = document.getElementById("coordinatorCodeInput").value;
+      const rememberMe = document.getElementById("remember").checked;
+      const status = document.getElementById("authStatus");
+
+      // Store remember me preference
+      localStorage.setItem('rememberMe', rememberMe);
+
+      if (isRegisterMode) {
+        try {
+          const snapshot = await db.collection("supervisors").where("email", "==", supervisorEmail).get();
+          if (snapshot.empty) throw new Error("Supervisor not found");
+
+          const query = await db.collection("coordinators").where("code", "==", code).get();
+          if (query.empty) throw new Error("Invalid coordinator code.");
+
+          const cred = await auth.createUserWithEmailAndPassword(email, password);
+          await cred.user.sendEmailVerification();
+
+          await db.collection("interns").doc(cred.user.uid).set({
+            email,
+            name: fullName,
+            school,
+            supervisorEmail,
+            coordinatorCode: code,
+            createdAt: new Date()
+          });
+          status.textContent = "✅ Verification email sent. Please verify before logging in.";
+          } catch (err) {
+            status.textContent = "❌ " + err.message;
+          }
+        } else {
+          const supervisorSnapshot = await db.collection("supervisors").where("email", "==", email).get();
+          if (!supervisorSnapshot.empty) {
+            status.textContent = "⚠️ This account is a supervisor. Please use the supervisor login.";
+            return;
+          }
+
+          auth.signInWithEmailAndPassword(email, password).then(cred => {
+            justLoggedIn = true;
+            if (!cred.user.emailVerified) {
+              status.textContent = "⚠️ Please verify your email first.";
+              auth.signOut();
+            }
+          }).catch(err => {
+            status.textContent = "❌ " + err.message;
+          });
+        }
+      }
+
+      // Handle automatic logout on page close
+      function handleAutoLogout() {
+        const rememberMe = localStorage.getItem('rememberMe') === 'true';
+        
+        if (!rememberMe && auth.currentUser) {
+          // Sign out the user if remember me is not checked
+          auth.signOut().then(() => {
+            console.log('User automatically logged out due to remember me being unchecked');
+          }).catch(error => {
+            console.error('Error during auto logout:', error);
+          });
+        }
+      }
+
+      // Set up beforeunload event listener for auto logout
+      window.addEventListener('beforeunload', function(e) {
+        handleAutoLogout();
+      });
+
+      // Also handle page visibility change for mobile browsers
+      document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'hidden') {
+          handleAutoLogout();
+        }
+      });
+
+      auth.onAuthStateChanged(async (user) => {
+        const modal = document.getElementById("authModal");
+        const content = document.getElementById("mainContent");
+
+        if (!user || !user.emailVerified) {
+          modal.style.display = "flex";
+          content.style.display = "none";
+          return;
+        }
+
+        const internDoc = await db.collection("interns").doc(user.uid).get();
+          if (!internDoc.exists) {
+            await auth.signOut();
+            modal.style.display = "flex";
+            content.style.display = "none";
+            return;
+          }
+
+          document.getElementById("authModal").style.display = "none";
+          if (justLoggedIn) {
+            proceedToDashboard(); // ✅ Go directly to dashboard
+          } else {
+            document.getElementById("confirmModal").style.display = "flex"; // Show modal only for returning users
+          }
+
+          document.getElementById("loggedInEmail").textContent = user.email;
+
+          currentIntern = internDoc.data();
+          const snapshot = await db.collection("supervisors").where("email", "==", currentIntern.supervisorEmail).get();
+
+          if (snapshot.empty) {
+            document.getElementById("supervisorName").textContent = "Not found";
+            document.getElementById("supervisorCompany").textContent = "Not found";
+            document.getElementById("geofenceCoords").textContent = "No data";
+          } else {
+            const supervisorData = snapshot.docs[0].data();
+            document.getElementById("supervisorName").textContent = supervisorData.fullName || "Unnamed";
+            document.getElementById("supervisorCompany").textContent = supervisorData.company || "Unknown";
+          }
+
+          const geoSnap = await db.collection("geofences").where("supervisorEmail", "==", currentIntern.supervisorEmail).limit(1).get();
+          if (!geoSnap.empty) {
+            const geo = geoSnap.docs[0].data();
+            if (geo.center) {
+              geofenceCenter = [geo.center.lat, geo.center.lng];
+              geofenceRadius = geo.radius || 100;
+              document.getElementById("geofenceCoords").textContent = `${geofenceCenter[0]}, ${geofenceCenter[1]}`;
+
+              // Initialize the map only once
+              setTimeout(() => {
+                if (!mapInitialized) {
+                  map = L.map("map").setView(geofenceCenter, 17);
+                  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                    attribution: "© OpenStreetMap contributors"
+                  }).addTo(map);
+                  mapInitialized = true;
+                } else {
+                  map.setView(geofenceCenter, 17);
+                }
+
+                // Remove previous geofence circle if exists
+                if (geofenceCircle) map.removeLayer(geofenceCircle);
+
+                geofenceCircle = L.circle(geofenceCenter, {
+                  radius: geofenceRadius,
+                  color: "red",
+                  fillColor: "#f03",
+                  fillOpacity: 0.3
+                }).addTo(map);
+
+                map.invalidateSize();
+              }, 300);
+            }
+          } else {
+            document.getElementById("geofenceCoords").textContent = "No geofence set";
+          }
+
+          // Load tasks for this intern's coordinator
+          try {
+            const tasksSnap = await db.collection("tasks")
+              .where("coordinatorCode", "==", currentIntern.coordinatorCode)
+              .orderBy("createdAt", "desc")
+              .get();
+
+            const taskList = document.getElementById("taskList");
+            taskList.innerHTML = ""; // Clear loading message
+
+            if (tasksSnap.empty) {
+              taskList.innerHTML = "<li class='text-gray-500'>No tasks posted yet.</li>";
+            } else {
+              tasksSnap.forEach(doc => {
+                const task = doc.data();
+                const li = document.createElement("li");
+                li.className = "border border-gray-300 rounded p-4";
+                li.innerHTML = `
+                  <h3 class="text-lg font-semibold text-blue-700 mb-1">${task.title}</h3>
+                  <p class="text-gray-700 mb-1">${task.description}</p>
+                  <p class="text-sm text-gray-500">Posted on: ${task.createdAt?.toDate().toLocaleString() || 'Unknown date'}</p>
+                `;
+                taskList.appendChild(li);
+              });
+            }
+          } catch (err) {
+            console.error("Error loading tasks:", err);
+            document.getElementById("taskList").innerHTML = "<li class='text-red-600'>❌ Failed to load tasks.</li>";
+          }
+
+          // Load supervisor's schedule for this intern
+          displaySupervisorSchedule();
+
+          modal.style.display = "none";
+
+          // ✅ At the very end of onAuthStateChanged
+          setTimeout(() => {
+            const loading = document.getElementById("loadingScreen");
+            loading.classList.add("opacity-0");
+            setTimeout(() => loading.style.display = "none", 300);
+          }, 100);
+        });
+
+      window.onload = () => {
+        // Load remember me preference on page load
+        const rememberCheckbox = document.getElementById('remember');
+        const savedPreference = localStorage.getItem('rememberMe');
+        if (savedPreference !== null) {
+          rememberCheckbox.checked = savedPreference === 'true';
+        }
+
+        // ✅ Fix: define loading before using it
+        const loading = document.getElementById("loadingScreen");
+        setTimeout(() => {
+          loading.classList.add("opacity-0")
+          setTimeout(() => loading.style.display = "none", 500);
+        }, 300);
+      };
+
+    function proceedToDashboard() {
+      document.getElementById("confirmModal").style.display = "none";
+      document.getElementById("mainContent").style.display = "block";
+    }
+
+    function logoutAndReset() {
+      firebase.auth().signOut().then(() => {
+        document.getElementById("confirmModal").style.display = "none";
+        document.getElementById("authModal").style.display = "flex";
+        document.getElementById("mainContent").style.display = "none";
+      });
+    }
+
+    async function checkGeofence() {
+      if (!geofenceCenter || !geofenceRadius) {
+        document.getElementById("result").textContent = "❌ Geofence not set.";
+        return;
+      }
+
+      if (!navigator.geolocation) {
+        document.getElementById("result").textContent = "❌ Geolocation not supported.";
+        return;
+      }
+
+      document.getElementById("result").textContent = "⏳ Checking location...";
+
+      // 1. Fetch supervisor's schedule
+      let scheduleDoc;
+      try {
+        scheduleDoc = await db.collection("schedules").doc(currentIntern.supervisorEmail).get();
+        if (!scheduleDoc.exists) {
+          document.getElementById("result").textContent = "❌ No schedule set by your supervisor.";
+          return;
+        }
+      } catch (err) {
+        document.getElementById("result").textContent = "❌ Failed to load schedule.";
+        return;
+      }
+
+      const schedule = scheduleDoc.data();
+      const allowedDays = Array.isArray(schedule.allowedDays) ? schedule.allowedDays : [];
+      const startTime = schedule.startTime || "00:00";
+      const endTime = schedule.endTime || "23:59";
+
+      // 2. Check if today is allowed
+      const today = new Date();
+      const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      const dayAbbr = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const todayAbbr = dayAbbr[today.getDay()];
+      if (!allowedDays.includes(todayAbbr)) {
+        document.getElementById("result").textContent = `❌ You are not allowed to time in today (${todayAbbr}).`;
+        return;
+      }
+
+      // 3. Check if current time is within allowed time
+      const nowMinutes = today.getHours() * 60 + today.getMinutes();
+      const [startHour, startMin] = startTime.split(":").map(Number);
+      const [endHour, endMin] = endTime.split(":").map(Number);
+      const startMinutes = startHour * 60 + startMin;
+      const endMinutes = endHour * 60 + endMin;
+
+      if (nowMinutes < startMinutes || nowMinutes > endMinutes) {
+        document.getElementById("result").textContent = `❌ You can only time in between ${to12Hour(startTime)} and ${to12Hour(endTime)}.`;
+        return;
+      }
+
+      // 4. Check geofence
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+
+          showCurrentLocationOnMap(lat, lng); // <-- Add this line
+
+          function getDistance(lat1, lng1, lat2, lng2) {
+            const R = 6371000; // meters
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLng = (lng2 - lng1) * Math.PI / 180;
+            const a =
+              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+          }
+
+          const distance = getDistance(lat, lng, geofenceCenter[0], geofenceCenter[1]);
+
+          if (distance <= geofenceRadius) {
+            document.getElementById("result").textContent = "✅ You are inside the geofence and allowed to time in. Time In recorded!";
+            
+            // Record time-in in Firestore
+            db.collection("interns_inside").doc(auth.currentUser.uid).set({
+              internEmail: auth.currentUser.email,
+              supervisorEmail: currentIntern.supervisorEmail,
+              timeIn: new Date(),
+              location: { lat, lng }
+            }).then(() => {
+              console.log("Time-in recorded in interns_inside.");
+            }).catch((err) => {
+              console.error("Failed to record time-in:", err);
+              document.getElementById("result").textContent += " (Failed to record time-in)";
+            });
+
+            // Show intern marker on map
+            if (map) {
+              if (internMarker) map.removeLayer(internMarker);
+              internMarker = L.marker([lat, lng]).addTo(map).bindPopup("Your Location").openPopup();
+            }
+          } else {
+            document.getElementById("result").textContent = "❌ You are outside the geofence.";
+          }
+        },
+        (err) => {
+          document.getElementById("result").textContent = "❌ Unable to get location.";
+        }
+      );
+    }
+
+    function to12Hour(timeStr) {
+      if (!timeStr) return "N/A";
+      const [hour, minute] = timeStr.split(":").map(Number);
+      const ampm = hour >= 12 ? "PM" : "AM";
+      const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+      return `${hour12}:${minute.toString().padStart(2, "0")} ${ampm}`;
+    }
+
+    async function displaySupervisorSchedule() {
+      const scheduleList = document.getElementById("scheduleList");
+      scheduleList.innerHTML = "<li class='text-gray-500'>Loading schedule...</li>";
+
+      try {
+        // Fetch the schedule document by supervisor's email
+        const docRef = db.collection("schedules").doc(currentIntern.supervisorEmail);
+        const doc = await docRef.get();
+
+        scheduleList.innerHTML = ""; // Clear loading message
+
+        if (!doc.exists) {
+          scheduleList.innerHTML = "<li class='text-gray-500'>No schedule set by your supervisor.</li>";
+          return;
+        }
+
+        const data = doc.data();
+
+        // Display the schedule fields
+        const days = Array.isArray(data.allowedDays) ? data.allowedDays.join(", ") : data.allowedDays || "No days set";
+        const startTime = to12Hour(data.startTime);
+        const endTime = to12Hour(data.endTime);
+
+        const li = document.createElement("li");
+        li.className = "border border-blue-200 rounded p-4";
+        li.innerHTML = `
+          <div class="font-semibold text-blue-700">Days: ${days}</div>
+          <div class="text-gray-700">Time: ${startTime} - ${endTime}</div>
+        `;
+        scheduleList.appendChild(li);
+
+      } catch (err) {
+        console.error("Schedule error:", err);
+        scheduleList.innerHTML = "<li class='text-red-600'>❌ Failed to load schedule.</li>";
+      }
+    }
+
+    function showCurrentLocationOnMap(lat, lng) {
+      if (map) {
+        if (internMarker) map.removeLayer(internMarker);
+        internMarker = L.marker([lat, lng])
+          .addTo(map)
+          .bindPopup("You are here")
+          .openPopup();
+        map.setView([lat, lng], 17);
+      }
+    }
+
+    async function timeOut() {
+      if (!geofenceCenter || !geofenceRadius) {
+        document.getElementById("result").textContent = "❌ Geofence not set.";
+        return;
+      }
+
+      if (!navigator.geolocation) {
+        document.getElementById("result").textContent = "❌ Geolocation not supported.";
+        return;
+      }
+
+      document.getElementById("result").textContent = "⏳ Checking location for time out...";
+
+      let scheduleDoc;
+      try {
+        scheduleDoc = await db.collection("schedules").doc(currentIntern.supervisorEmail).get();
+        if (!scheduleDoc.exists) {
+          document.getElementById("result").textContent = "❌ No schedule set by your supervisor.";
+          return;
+        }
+      } catch (err) {
+        document.getElementById("result").textContent = "❌ Failed to load schedule.";
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+
+          showCurrentLocationOnMap(lat, lng);
+
+          const docRef = db.collection("interns_inside").doc(auth.currentUser.uid);
+          const doc = await docRef.get();
+          if (!doc.exists || !doc.data().timeIn) {
+            document.getElementById("result").textContent = "❌ You have not timed in yet.";
+            return;
+          }
+
+          function getDistance(lat1, lng1, lat2, lng2) {
+            const R = 6371000; // meters
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLng = (lng2 - lng1) * Math.PI / 180;
+            const a =
+              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+          }
+
+          const distance = getDistance(lat, lng, geofenceCenter[0], geofenceCenter[1]);
+
+          if (distance <= geofenceRadius) {
+            await docRef.update({
+              timeOut: new Date(),
+              locationOut: { lat, lng }
+            });
+            document.getElementById("result").textContent = "✅ Time Out recorded successfully.";
+          } else {
+            document.getElementById("result").textContent = "❌ You are outside the geofence. Time Out not recorded.";
+          }
+        },
+        (err) => {
+          document.getElementById("result").textContent = "❌ Unable to get location.";
+        }
+      );
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Supervisor Dashboard</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+  <!-- Leaflet.js -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <style>
+    #map {
+      height: 400px;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 text-gray-900">
+  <!-- 🔒 Login/Register Modal -->
+  <div id="authModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
+      <h2 id="modalTitle" class="text-xl font-bold mb-4 text-center">Supervisor Login</h2>
+      <input id="email" type="email" placeholder="Email" class="w-full px-3 py-2 border rounded mb-3" />
+      <input id="password" type="password" placeholder="Password" class="w-full px-3 py-2 border rounded mb-3" />
+      <div id="extraFields" class="hidden">
+        <input id="fullName" type="text" placeholder="Full Name" class="w-full px-3 py-2 border rounded mb-3" />
+        <input id="company" type="text" placeholder="Company Name" class="w-full px-3 py-2 border rounded mb-3" />
+      </div>
+      <button id="authButton" onclick="login()" class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
+        🔐 Log In
+      </button>
+      <p id="authStatus" class="text-sm mt-2 text-center text-red-600"></p>
+      <p class="text-sm text-center mt-4">
+        <span id="togglePrompt">Don't have an account?</span>
+        <button onclick="toggleAuthMode()" class="text-blue-600 hover:underline" id="toggleMode">Register here</button>
+      </p>
+    </div>
+  </div>
+
+  <!-- 🌀 Loading Overlay -->
+  <div id="loadingOverlay" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 hidden">
+    <div class="bg-white px-4 py-3 rounded-lg shadow-lg text-center">
+      <svg class="animate-spin h-6 w-6 text-blue-600 mx-auto mb-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+      </svg>
+      <p class="text-sm font-medium">Processing...</p>
+    </div>
+  </div>
+
+  <!-- 🗺️ Dashboard -->
+  <div id="dashboard" class="hidden max-w-5xl mx-auto px-6 py-8">
+    <h1 class="text-3xl font-bold mb-6 text-center">📍 Supervisor Dashboard</h1>
+    <div class="mb-6">
+      <label class="block mb-2 font-medium">Radius (meters):</label>
+      <input id="radiusInput" type="number" value="100" min="10" max="1000" step="10" class="w-full max-w-xs px-3 py-2 border rounded" />
+    </div>
+    <div id="map" class="w-full rounded-xl border shadow mb-6"></div>
+    <div class="flex justify-end space-x-2">
+      <button id="editGeofenceBtn" onclick="enableGeofenceEdit()" class="bg-yellow-500 text-white px-6 py-2 rounded-lg hover:bg-yellow-600 transition">
+        ✏️ Edit Geofence
+      </button>
+      <button id="saveGeofenceBtn" onclick="saveGeofence()" class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition" disabled>
+        💾 Save Geofence
+      </button>
+    </div>
+    <p id="status" class="mt-4 text-center font-semibold"></p>
+    <div class="mt-10">
+      <h2 class="text-2xl font-bold mb-4">🧑‍🎓 Interns</h2>
+      <ul id="internList" class="bg-white rounded-lg shadow p-4 space-y-2"></ul>
+
+      <!-- 📅 Schedule Form -->
+      <div class="mt-10">
+        <h2 class="text-2xl font-bold mb-4">📆 Assign Intern Schedule</h2>
+        <div class="bg-white p-4 rounded shadow space-y-4">
+
+          <!-- Current Schedule Section -->
+          <div id="currentSchedule" class="bg-white rounded-lg shadow p-4 mb-6">
+            <h2 class="text-xl font-bold mb-2">Current Intern Schedule</h2>
+            <div id="scheduleDetails" class="text-gray-700"></div>
+          </div>
+
+          <!-- Add Edit Schedule button above the schedule form -->
+          <div class="flex justify-end space-x-2 mb-4">
+            <button id="editScheduleBtn" onclick="enableScheduleEdit()" class="bg-yellow-500 text-white px-6 py-2 rounded-lg hover:bg-yellow-600 transition">
+              ✏️ Edit Schedule
+            </button>
+            <button id="saveScheduleBtn" onclick="saveSchedule()" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700" style="display:none;">
+              💾 Save Schedule
+            </button>
+          </div>
+
+          <!-- Wrap schedule form fields in a container for easy show/hide -->
+          <div id="scheduleFormFields" style="display:none;">
+            <div>
+              <label class="block font-medium">Schedule Start Date:</label>
+              <input id="startDate" type="date" class="w-full px-3 py-2 border rounded" />
+            </div>
+            <div>
+              <label class="block font-medium">Schedule End Date:</label>
+              <input id="endDate" type="date" class="w-full px-3 py-2 border rounded" />
+            </div>
+
+            <div>
+              <label class="block font-medium">Start Time:</label>
+              <input id="startTime" type="time" class="w-full px-3 py-2 border rounded" />
+            </div>
+            <div>
+              <label class="block font-medium">End Time:</label>
+              <input id="endTime" type="time" class="w-full px-3 py-2 border rounded" />
+            </div>
+            <div>
+              <label class="block font-medium">Allowed Days:</label>
+              <div class="grid grid-cols-3 gap-2 mt-1">
+                <label><input type="checkbox" class="dayCheckbox" value="Mon"> Mon</label>
+                <label><input type="checkbox" class="dayCheckbox" value="Tue"> Tue</label>
+                <label><input type="checkbox" class="dayCheckbox" value="Wed"> Wed</label>
+                <label><input type="checkbox" class="dayCheckbox" value="Thu"> Thu</label>
+                <label><input type="checkbox" class="dayCheckbox" value="Fri"> Fri</label>
+                <label><input type="checkbox" class="dayCheckbox" value="Sat"> Sat</label>
+                <label><input type="checkbox" class="dayCheckbox" value="Sun"> Sun</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 🔁 Log Out All Interns -->
+      <div class="mt-10">
+        <button onclick="logoutAllInterns()" class="bg-red-600 text-white px-6 py-2 rounded hover:bg-red-700 mr-4">
+          🚪 Log Out All Interns
+        </button>
+        <button onclick="supervisorLogout()" class="bg-gray-600 text-white px-6 py-2 rounded hover:bg-gray-700">
+          🔓 Supervisor Logout
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirmation Modal -->
+  <div id="confirmModal" style="display: none" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+    <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
+      <h2 class="text-xl font-bold mb-4 text-center">Confirm Login</h2>
+      <p class="text-center mb-4">Logged in as <strong id="loggedInEmail"></strong></p>
+      <button onclick="proceedToDashboard()" class="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700 mb-2">✅ Continue</button>
+      <button onclick="logoutAndReset()" class="w-full bg-gray-500 text-white py-2 rounded hover:bg-gray-600">🔄 Use Different Account</button>
+    </div>
+  </div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyDaCCFqs7cwKMiicnlP2Ig3s-WHw8gyZts",
+      authDomain: "index-database-d00f9.firebaseapp.com",
+      projectId: "index-database-d00f9",
+      storageBucket: "index-database-d00f9.firebasestorage.app",
+      messagingSenderId: "310780304431",
+      appId: "1:310780304431:web:18c2fdd5ab6405e80dfada"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    let isRegisterMode = false;
+    let map, marker, circle;
+    let confirmationShown = false;
+
+    window.onload = () => {
+      auth.onAuthStateChanged(async (user) => {
+        if (user && user.emailVerified) {
+          const snapshot = await db.collection("supervisors").where("email", "==", user.email).limit(1).get();
+          if (snapshot.empty) {
+            alert("⚠️ This email is not registered as a supervisor. Logging out.");
+            await auth.signOut();
+            location.reload();
+            return;
+          }
+          document.getElementById("authModal").classList.add("hidden");
+          document.getElementById("dashboard").classList.add("hidden");
+          document.getElementById("loggedInEmail").textContent = user.email;
+
+          // Show confirmation modal only if not already shown
+          if (!confirmationShown) {
+            document.getElementById("confirmModal").style.display = "flex";
+            confirmationShown = true;
+          } else {
+            proceedToDashboard();
+          }
+        } else {
+          document.getElementById("authModal").classList.remove("hidden");
+          document.getElementById("dashboard").classList.add("hidden");
+          document.getElementById("confirmModal").style.display = "none";
+        }
+      });
+    };
+
+    function login() {
+      const email = document.getElementById("email").value;
+      const password = document.getElementById("password").value;
+      const fullName = document.getElementById("fullName").value;
+      const company = document.getElementById("company").value;
+      const authStatus = document.getElementById("authStatus");
+
+      if (isRegisterMode) {
+        auth.createUserWithEmailAndPassword(email, password).then((cred) => {
+          return cred.user.sendEmailVerification().then(() => {
+            return db.collection("supervisors").add({
+              email,
+              fullName,
+              company,
+              createdAt: new Date()
+            });
+          });
+        }).then(() => {
+          authStatus.textContent = "✅ Verification email sent. Please verify before logging in.";
+        }).catch(err => {
+          authStatus.textContent = "❌ " + err.message;
+        });
+      } else {
+        auth.signInWithEmailAndPassword(email, password).then(async (cred) => {
+          if (!cred.user.emailVerified) {
+            authStatus.textContent = "⚠️ Please verify your email before logging in.";
+            auth.signOut();
+            return;
+          }
+          const snapshot = await db.collection("supervisors").where("email", "==", email).limit(1).get();
+          if (snapshot.empty) {
+            authStatus.textContent = "❌ This email is not registered as a supervisor.";
+            auth.signOut();
+            return;
+          }
+        }).catch(err => {
+          authStatus.textContent = "❌ " + err.message;
+        });
+      }
+    }
+
+    function toggleAuthMode() {
+      isRegisterMode = !isRegisterMode;
+      document.getElementById("modalTitle").textContent = isRegisterMode ? "Supervisor Registration" : "Supervisor Login";
+      document.getElementById("authButton").textContent = isRegisterMode ? "📝 Register" : "🔐 Log In";
+      document.getElementById("togglePrompt").textContent = isRegisterMode ? "Already have an account?" : "Don't have an account?";
+      document.getElementById("toggleMode").textContent = isRegisterMode ? "Log in here" : "Register here";
+      document.getElementById("extraFields").classList.toggle("hidden", !isRegisterMode);
+      document.getElementById("authStatus").textContent = "";
+    }
+
+    // Refactor map click handler for enabling/disabling
+    function onMapClick(e) {
+      const radius = parseInt(document.getElementById("radiusInput").value);
+      if (marker) map.removeLayer(marker);
+      if (circle) map.removeLayer(circle);
+
+      marker = L.marker(e.latlng).addTo(map);
+      circle = L.circle(e.latlng, { radius: radius }).addTo(map);
+    }
+
+    function initMap() {
+      map = L.map('map').setView([10.7502, 121.9324], 15);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: 'Map data © OpenStreetMap contributors'
+      }).addTo(map);
+
+      disableGeofenceEdit(); // Disable editing by default
+    }
+
+    function loadGeofence() {
+      const email = auth.currentUser.email;
+      db.collection("geofences").doc(email).get().then((doc) => {
+        if (doc.exists) {
+          const data = doc.data();
+          const latlng = [data.center.lat, data.center.lng];
+          const radius = data.radius || 100;
+          document.getElementById("radiusInput").value = radius;
+
+          if (marker) map.removeLayer(marker);
+          if (circle) map.removeLayer(circle);
+
+          marker = L.marker(latlng).addTo(map);
+          circle = L.circle(latlng, { radius: radius }).addTo(map);
+          map.setView(latlng, 16);
+        }
+      });
+    }
+
+    function enableGeofenceEdit() {
+      document.getElementById("radiusInput").disabled = false;
+      document.getElementById("saveGeofenceBtn").disabled = false;
+      // Enable map click for editing geofence
+      if (map) map.dragging.enable();
+      if (map) map.on('click', onMapClick);
+    }
+
+    function disableGeofenceEdit() {
+      document.getElementById("radiusInput").disabled = true;
+      document.getElementById("saveGeofenceBtn").disabled = true;
+      // Disable map click for editing geofence
+      if (map) map.dragging.disable();
+      if (map) map.off('click', onMapClick);
+    }
+
+    function saveGeofence() {
+      const radius = parseInt(document.getElementById("radiusInput").value);
+      if (!marker || !auth.currentUser) {
+        document.getElementById("status").textContent = "⚠️ Select a location on the map first.";
+        console.warn("saveGeofence: No marker or user.", { marker, user: auth.currentUser });
+        return;
+      }
+      const { lat, lng } = marker.getLatLng();
+      const email = auth.currentUser.email;
+
+      console.log("saveGeofence: Attempting to save geofence with values:", {
+        lat, lng, radius, email
+      });
+
+      db.collection("geofences").doc(email).set({
+        center: { lat, lng },
+        radius: radius,
+        supervisorEmail: email,
+        updatedAt: new Date()
+      }).then(() => {
+        document.getElementById("status").textContent = `✅ Geofence saved at (${lat.toFixed(4)}, ${lng.toFixed(4)}) with radius ${radius}m.`;
+        console.log("saveGeofence: Geofence saved successfully.");
+        disableGeofenceEdit(); // Disable editing after saving
+      }).catch((error) => {
+        document.getElementById("status").textContent = "❌ Failed to save geofence.";
+        console.error("saveGeofence: Error saving geofence:", error);
+        document.getElementById("status").textContent += ` (${error.code || error.message})`;
+      });
+    }
+
+    function loadInterns() {
+      console.log("loadInterns called");
+      const email = auth.currentUser.email;
+      const internList = document.getElementById("internList");
+      internList.innerHTML = "<p class='text-sm text-gray-500'>Loading...</p>";
+
+      // Fetch and display current schedule
+      db.collection("schedules").doc(email).get().then(scheduleDoc => {
+        const scheduleDetails = document.getElementById("scheduleDetails");
+        if (scheduleDoc.exists) {
+          const schedule = scheduleDoc.data();
+          const startTime = schedule.startTime || "N/A";
+          const endTime = schedule.endTime || "N/A";
+          const startDate = schedule.startDate || "N/A";
+          const endDate = schedule.endDate || "N/A";
+          const allowedDays = schedule.allowedDays || [];
+
+          function calculateInternshipHours(schedule,) {
+            const { startDate, endDate, startTime, endTime } = schedule;
+            if (!startDate || !endDate || !startTime || !endTime) return 0;
+
+            // Build dates safely at local midnight
+            const start = new Date(`${startDate}T00:00:00`);
+            const end = new Date(`${endDate}T00:00:00`);
+            if (isNaN(start) || isNaN(end) || end < start) return 0;
+
+            // Parse times
+            const [sh, sm] = startTime.split(":").map(Number);
+            const [eh, em] = endTime.split(":").map(Number);
+            if ([sh, sm, eh, em].some(n => Number.isNaN(n))) return 0;
+
+            // Hours per valid day (handle overnight just in case)
+            let dailyHours = (eh + em / 60) - (sh + sm / 60);
+            if (dailyHours < 0) dailyHours += 24;
+
+            // Normalize allowedDays: allow "Mon"/"Tue" *or* "Monday"/"Tuesday"
+            const allowed = (schedule.allowedDays && schedule.allowedDays.length)
+              ? new Set(schedule.allowedDays.map(d => d.slice(0, 3))) // "Mon"
+              : null; // null => all days allowed
+
+            let totalHours = 0;
+
+            // Count only allowed days; compare using weekday 'short' ("Mon")
+            for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+              const wdShort = d.toLocaleDateString('en-US', { weekday: 'short' }); // "Mon"
+              if (!allowed || allowed.has(wdShort)) {
+                totalHours += dailyHours;
+              }
+            }
+
+            return totalHours;
+          }
+
+          const internshipHours = calculateInternshipHours(schedule);
+
+          scheduleDetails.innerHTML = `
+            <div>
+              <strong>Date Range:</strong> ${startDate} - ${endDate}<br>
+              <strong>Time:</strong> ${startTime} - ${endTime}<br>
+              <strong>Days:</strong> ${allowedDays.length ? allowedDays.join(", ") : "N/A"}
+              <br><strong>Total Hours:</strong> ${internshipHours.toFixed(2)} hrs
+            </div>
+          `;
+        } else {
+          scheduleDetails.innerHTML = "<span class='text-red-600'>No schedule set.</span>";
+        }
+      });
+
+      db.collection("interns").where("supervisorEmail", "==", email).get().then(snapshot => {
+        console.log("Intern query result size:", snapshot.size);
+        internList.innerHTML = "";
+        if (snapshot.empty) {
+          internList.innerHTML = "<p class='text-sm text-gray-500'>No interns assigned.</p>";
+          return;
+        }
+        snapshot.forEach(doc => {
+          const intern = doc.data();
+          console.log("Intern found:", intern);
+          const internId = doc.id;
+
+          db.collection("interns_inside").doc(internId).get().then(presenceDoc => {
+            let statusText = "";
+            let statusClass = "text-red-600";
+            let extraInfo = "";
+
+            if (presenceDoc.exists) {
+              const data = presenceDoc.data();
+              // store timeIn and timeOut as Firestore Timestamps
+              const timeIn = data.timeIn ? data.timeIn.toDate() : null;
+              const timeOut = data.timeOut ? data.timeOut.toDate() : null;
+              const timedIn = data.timedIn || false;
+
+              // Get schedule for this intern's supervisor
+              db.collection("schedules").doc(email).get().then(scheduleDoc => {
+                if (scheduleDoc.exists && timeIn && timeOut) {
+                  const schedule = scheduleDoc.data();
+                  const startTime = schedule.startTime || "00:00";
+                  const endTime = schedule.endTime || "23:59";
+                  // Convert schedule times to Date objects for today
+                  const today = new Date(timeIn);
+                  const [startHour, startMin] = startTime.split(":").map(Number);
+                  const [endHour, endMin] = endTime.split(":").map(Number);
+
+                  const schedStart = new Date(today);
+                  schedStart.setHours(startHour, startMin, 0, 0);
+                  const schedEnd = new Date(today);
+                  schedEnd.setHours(endHour, endMin, 0, 0);
+
+                  if (timeOut < schedEnd) {
+                    // Undertime
+                    const diffMs = schedEnd - timeOut;
+                    const diffMin = Math.round(diffMs / 60000);
+                    statusText = `⏰ Undertime (${diffMin} min left)`;
+                    statusClass = "text-yellow-600";
+                    extraInfo = `<br><span class='text-xs text-gray-500'>Time Out: ${timeOut.toLocaleTimeString()}</span>`;
+                  } else if (timeOut > schedEnd) {
+                    // Overtime
+                    const diffMs = timeOut - schedEnd;
+                    const diffMin = Math.round(diffMs / 60000);
+                    statusText = `⏱️ Overtime (${diffMin} min extra)`;
+                    statusClass = "text-green-600";
+                    extraInfo = `<br><span class='text-xs text-gray-500'>Time Out: ${timeOut.toLocaleTimeString()}</span>`;
+                  }
+                }
+
+                // Add timed in status
+                const timedInStatus = timedIn ? "✅ Timed In" : "❌ Not Timed In";
+                const timedInClass = timedIn ? "text-green-600" : "text-red-600";
+
+                internList.innerHTML += `
+                  <li class="bg-gray-50 rounded-lg shadow p-4 flex justify-between items-center">
+                    <div>
+                      <h3 class="text-lg font-semibold">${intern.name}</h3>
+                      <p class="text-sm text-gray-500">${intern.email}</p>
+                      <p class="text-sm ${statusClass} font-medium mt-1">${statusText}</p>
+                      <p class="text-sm ${timedInClass} font-medium mt-1">${timedInStatus}</p>
+                      ${extraInfo}
+                    </div>
+                  </li>
+                `;
+              }).catch(err => {
+                console.error("Error loading schedule:", err);
+                internList.innerHTML += `<li class="text-red-600">❌ Error loading schedule</li>`;
+              });
+            } else {
+              internList.innerHTML += `
+                <li class="bg-gray-50 rounded-lg shadow p-4 flex justify-between items-center">
+                  <div>
+                    <h3 class="text-lg font-semibold">${intern.name}</h3>
+                    <p class="text-sm text-gray-500">${intern.email}</p>
+                    <p class="text-sm ${statusClass} font-medium mt-1">${statusText}</p>
+                    <p class="text-sm text-red-600 font-medium mt-1">❌ Not Timed In</p>
+                  </div>
+                </li>
+              `;
+            }
+          }).catch(err => {
+            console.error("Error loading intern presence:", err);
+            internList.innerHTML += `<li class="text-red-600">❌ Error loading intern presence</li>`;
+          });
+        });
+      }).catch(err => {
+        console.error("Error loading interns:", err);
+        internList.innerHTML = "<p class='text-sm text-red-600'>❌ Error loading interns.</p>";
+      });
+    }
+
+    function enableScheduleEdit() {
+      document.getElementById("scheduleFormFields").style.display = "";
+      document.getElementById("saveScheduleBtn").style.display = "";
+      document.getElementById("editScheduleBtn").style.display = "none";
+    }
+
+    function saveSchedule() {
+      const email = auth.currentUser.email;
+      const startTime = document.getElementById("startTime").value;
+      const endTime = document.getElementById("endTime").value;
+      const startDate = document.getElementById("startDate").value;
+      const endDate = document.getElementById("endDate").value;
+      const allowedDays = Array.from(document.querySelectorAll(".dayCheckbox:checked")).map(cb => cb.value);
+
+
+      if (!startTime || !endTime || !startDate || !endDate || allowedDays.length === 0) {
+        return alert("⚠️ Please fill in all fields.");
+      }
+
+      db.collection("schedules").doc(email).set({
+        startTime,
+        endTime,
+        startDate,
+        endDate,
+        allowedDays,
+        supervisorEmail: email,
+        updatedAt: new Date()
+      }).then(() => {
+        alert("✅ Schedule saved successfully.");
+        document.getElementById("scheduleFormFields").style.display = "none";
+        document.getElementById("saveScheduleBtn").style.display = "none";
+        document.getElementById("editScheduleBtn").style.display = "";
+      }).catch(err => {
+        console.error("Error saving schedule:", err);
+        alert("❌ Error saving schedule. Please try again.");
+      });
+
+      if (new Date(endDate) < new Date(startDate)) {
+        return alert("⚠️ End date cannot be earlier than start date.");
+      }
+
+      // Prevent selecting an end date earlier than start date
+      document.addEventListener("DOMContentLoaded", () => {
+        const startDateInput = document.getElementById("startDate");
+        const endDateInput = document.getElementById("endDate");
+
+        startDateInput.addEventListener("change", () => {
+          endDateInput.min = startDateInput.value;
+        });
+
+        endDateInput.addEventListener("change", () => {
+          if (endDateInput.value < startDateInput.value) {
+            alert("⚠️ End date cannot be earlier than start date.");
+            endDateInput.value = "";
+          }
+        });
+      });
+    }
+
+    function supervisorLogout() {
+      auth.signOut().then(() => {
+        location.reload();
+      }).catch(err => {
+        console.error("Error during supervisor logout:", err);
+        alert("❌ Error logging out. Please try again.");
+      });
+    }
+
+    function proceedToDashboard() {
+      document.getElementById("authModal").classList.add("hidden");
+      document.getElementById("dashboard").classList.remove("hidden");
+      document.getElementById("confirmModal").style.display = "none";
+      initMap(); // <-- Add this line
+      loadGeofence();
+      loadInterns();
+    }
+
+    function logoutAndReset() {
+      auth.signOut().then(() => {
+        confirmationShown = false; // Reset the flag
+        document.getElementById("email").value = "";
+        document.getElementById("password").value = "";
+        document.getElementById("fullName").value = "";
+        document.getElementById("company").value = "";
+        document.getElementById("authStatus").textContent = "";
+        document.getElementById("authModal").classList.remove("hidden");
+        document.getElementById("dashboard").classList.add("hidden");
+        document.getElementById("confirmModal").style.display = "none";
+      }).catch(err => {
+        console.error("Error during logout and reset:", err);
+        alert("❌ Error processing request. Please try again.");
+      });
+    }
+  </script>
+</body>
+</html>

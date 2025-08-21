@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Intern Coordinator Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-900">
+  <div id="authModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
+      <h2 id="modalTitle" class="text-xl font-bold mb-4 text-center">Coordinator Login</h2>
+      <input id="email" type="email" placeholder="Email" class="w-full px-3 py-2 border rounded mb-3">
+      <input id="password" type="password" placeholder="Password" class="w-full px-3 py-2 border rounded mb-3">
+      <div id="extraFields" class="hidden">
+        <input id="fullName" type="text" placeholder="Full Name" class="w-full px-3 py-2 border rounded mb-3">
+        <input id="organization" type="text" placeholder="Organization" class="w-full px-3 py-2 border rounded mb-3">
+      </div>
+      <button id="authButton" onclick="authAction()" class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
+        🔐 Log In
+      </button>
+      <p id="authStatus" class="text-sm mt-2 text-center text-red-600"></p>
+      <p class="text-sm text-center mt-4">
+        <span id="togglePrompt">Don't have an account?</span>
+        <button onclick="toggleAuthMode()" class="text-blue-600 hover:underline" id="toggleMode">Register here</button>
+      </p>
+    </div>
+  </div>
+
+  <div id="dashboard" class="hidden max-w-3xl mx-auto p-6">
+    <h1 class="text-2xl font-bold mb-4">👨‍🏫 Welcome, <span id="coordinatorName">Coordinator</span></h1>
+    <p class="mb-2 text-gray-700">Organization: <span id="coordinatorOrg"></span></p>
+    <p class="mb-6 text-blue-700 font-semibold">Your Coordinator Code: <span id="coordinatorCode"></span></p>
+
+    <!-- 📌 Task Posting Section -->
+    <div class="bg-white p-6 rounded shadow mb-6">
+      <h2 class="text-xl font-semibold mb-4">📋 Post New Task</h2>
+      <input id="taskTitle" type="text" placeholder="Task Title" class="w-full mb-3 px-3 py-2 border rounded">
+      <textarea id="taskDescription" rows="4" placeholder="Task Description" class="w-full mb-3 px-3 py-2 border rounded"></textarea>
+      <button onclick="postTask()" class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700">📨 Post Task</button>
+      <p id="taskStatus" class="text-sm mt-2 text-red-600"></p>
+    </div>
+  </div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyDaCCFqs7cwKMiicnlP2Ig3s-WHw8gyZts",
+      authDomain: "index-database-d00f9.firebaseapp.com",
+      projectId: "index-database-d00f9",
+      storageBucket: "index-database-d00f9.appspot.com",
+      messagingSenderId: "310780304431",
+      appId: "1:310780304431:web:18c2fdd5ab6405e80dfada"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+    const storage = firebase.storage();
+
+    let isRegisterMode = false;
+    let coordinatorCode = "";
+
+    function toggleAuthMode() {
+      isRegisterMode = !isRegisterMode;
+      document.getElementById("modalTitle").textContent = isRegisterMode ? "Coordinator Registration" : "Coordinator Login";
+      document.getElementById("authButton").textContent = isRegisterMode ? "📝 Register" : "🔐 Log In";
+      document.getElementById("togglePrompt").textContent = isRegisterMode ? "Already have an account?" : "Don't have an account?";
+      document.getElementById("toggleMode").textContent = isRegisterMode ? "Log in here" : "Register here";
+      document.getElementById("extraFields").classList.toggle("hidden", !isRegisterMode);
+      document.getElementById("authStatus").textContent = "";
+    }
+
+    function generateCode() {
+      const letters = Math.random().toString(36).substring(2, 6).toUpperCase();
+      const numbers = Math.floor(1000 + Math.random() * 9000);
+      return letters + numbers;
+    }
+
+    async function authAction() {
+      const email = document.getElementById("email").value;
+      const password = document.getElementById("password").value;
+      const fullName = document.getElementById("fullName").value;
+      const organization = document.getElementById("organization").value;
+      const status = document.getElementById("authStatus");
+
+      if (isRegisterMode) {
+        if (!fullName || !organization) {
+          status.textContent = "❌ Full name and organization are required.";
+          return;
+        }
+        try {
+          const cred = await auth.createUserWithEmailAndPassword(email, password);
+          const code = generateCode();
+
+          await db.collection("coordinators").doc(cred.user.uid).set({
+            email,
+            fullName,
+            organization,
+            code,
+            createdAt: new Date()
+          });
+
+          await cred.user.sendEmailVerification();
+          status.textContent = `✅ Verification email sent. Please verify and then log in.`;
+          await auth.signOut();
+        } catch (err) {
+          status.textContent = "❌ " + err.message;
+        }
+      } else {
+        try {
+          const cred = await auth.signInWithEmailAndPassword(email, password);
+          if (!cred.user.emailVerified) {
+            status.textContent = "⚠️ Please verify your email first.";
+            await auth.signOut();
+            return;
+          }
+
+          const doc = await db.collection("coordinators").doc(cred.user.uid).get();
+          if (doc.exists) {
+            const data = doc.data();
+            coordinatorCode = data.code;
+            document.getElementById("coordinatorName").textContent = data.fullName || "Coordinator";
+            document.getElementById("coordinatorOrg").textContent = data.organization || "Unknown";
+            document.getElementById("coordinatorCode").textContent = data.code || "N/A";
+            document.getElementById("authModal").classList.add("hidden");
+            document.getElementById("dashboard").classList.remove("hidden");
+          } else {
+            status.textContent = "❌ Coordinator profile not found. Please register again.";
+            await auth.signOut();
+          }
+
+        } catch (err) {
+          status.textContent = "❌ " + err.message;
+        }
+      }
+    }
+
+    async function postTask() {
+    const title = document.getElementById("taskTitle").value.trim();
+    const description = document.getElementById("taskDescription").value.trim();
+    const status = document.getElementById("taskStatus");
+
+    if (!title || !description) {
+      status.textContent = "❌ Please enter both title and description.";
+      return;
+    }
+
+    try {
+      await db.collection("tasks").add({
+        coordinatorUID: auth.currentUser.uid,
+        coordinatorCode,
+        title,
+        description,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      status.textContent = "✅ Task posted successfully.";
+      document.getElementById("taskTitle").value = "";
+      document.getElementById("taskDescription").value = "";
+    } catch (error) {
+      console.error("Error posting task:", error);
+      status.textContent = "❌ Failed to post task.";
+    }
+  }
+  </script>
+</body>
+</html>
