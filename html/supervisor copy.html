@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Supervisor Dashboard</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+    <!-- Leaflet.js -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+      #map {
+        height: 400px;
+      }
+
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body class="bg-gray-100 text-gray-900">
+    <!-- 🔒 Login/Register Modal -->
+    <div
+      id="authModal"
+      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+    >
+      <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
+        <h2 id="modalTitle" class="text-xl font-bold mb-4 text-center">
+          Supervisor Login
+        </h2>
+        <input
+          id="email"
+          type="email"
+          placeholder="Email"
+          class="w-full px-3 py-2 border rounded mb-3"
+        />
+        <input
+          id="password"
+          type="password"
+          placeholder="Password"
+          class="w-full px-3 py-2 border rounded mb-3"
+        />
+        <div id="extraFields" class="hidden">
+          <input
+            id="fullName"
+            type="text"
+            placeholder="Full Name"
+            class="w-full px-3 py-2 border rounded mb-3"
+          />
+          <input
+            id="company"
+            type="text"
+            placeholder="Company Name"
+            class="w-full px-3 py-2 border rounded mb-3"
+          />
+        </div>
+        <button
+          id="authButton"
+          onclick="login()"
+          class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition"
+        >
+          🔐 Log In
+        </button>
+        <p id="authStatus" class="text-sm mt-2 text-center text-red-600"></p>
+        <p class="text-sm text-center mt-4">
+          <span id="togglePrompt">Don't have an account?</span>
+          <button
+            onclick="toggleAuthMode()"
+            class="text-blue-600 hover:underline"
+            id="toggleMode"
+          >
+            Register here
+          </button>
+        </p>
+      </div>
+    </div>
+
+    <!-- 🌀 Loading Overlay -->
+    <div
+      id="loadingOverlay"
+      class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 hidden"
+    >
+      <div class="bg-white px-4 py-3 rounded-lg shadow-lg text-center">
+        <svg
+          class="animate-spin h-6 w-6 text-blue-600 mx-auto mb-2"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+        >
+          <circle
+            class="opacity-25"
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            stroke-width="4"
+          ></circle>
+          <path
+            class="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8v8z"
+          ></path>
+        </svg>
+        <p class="text-sm font-medium">Processing...</p>
+      </div>
+    </div>
+
+    <!-- 🗺️ Dashboard -->
+    <div id="dashboard" class="hidden max-w-5xl mx-auto px-6 py-8">
+      <h1 class="text-3xl font-bold mb-6 text-center">
+        📍 Supervisor Dashboard
+      </h1>
+      <div class="mb-6">
+        <label class="block mb-2 font-medium">Radius (meters):</label>
+        <input
+          id="radiusInput"
+          type="number"
+          value="100"
+          min="10"
+          max="1000"
+          step="10"
+          class="w-full max-w-xs px-3 py-2 border rounded"
+        />
+      </div>
+      <div id="map" class="w-full rounded-xl border shadow mb-6"></div>
+      <div class="flex justify-end space-x-2">
+        <button
+          id="editGeofenceBtn"
+          onclick="enableGeofenceEdit()"
+          class="bg-yellow-500 text-white px-6 py-2 rounded-lg hover:bg-yellow-600 transition"
+        >
+          ✏️ Edit Geofence
+        </button>
+        <button
+          id="saveGeofenceBtn"
+          onclick="saveGeofence()"
+          class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition"
+          disabled
+        >
+          💾 Save Geofence
+        </button>
+      </div>
+      <p id="status" class="mt-4 text-center font-semibold"></p>
+      <div class="mt-10">
+        <h2 class="text-2xl font-bold mb-4">🧑‍🎓 Interns</h2>
+        <ul
+          id="internList"
+          class="bg-white rounded-lg shadow p-4 space-y-2"
+        ></ul>
+
+        <!-- 📅 Schedule Form -->
+        <div class="mt-10">
+          <h2 class="text-2xl font-bold mb-4">📆 Assign Intern Schedule</h2>
+          <div class="bg-white p-4 rounded shadow space-y-4">
+            <!-- Current Schedule Section -->
+            <div
+              id="currentSchedule"
+              class="bg-white rounded-lg shadow p-4 mb-6"
+            >
+              <h2 class="text-xl font-bold mb-2">Current Intern Schedule</h2>
+              <div id="scheduleDetails" class="text-gray-700"></div>
+            </div>
+
+            <!-- Add Edit Schedule button above the schedule form -->
+            <div class="flex justify-end space-x-2 mb-4">
+              <button
+                id="editScheduleBtn"
+                onclick="openEditScheduleModal()"
+                class="bg-yellow-500 text-white px-6 py-2 rounded-lg hover:bg-yellow-600 transition"
+              >
+                ✏️ Edit Schedule
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 🔁 Log Out All Interns -->
+        <div class="mt-10">
+          <button
+            onclick="logoutAllInterns()"
+            class="bg-red-600 text-white px-6 py-2 rounded hover:bg-red-700 mr-4"
+          >
+            🚪 Log Out All Interns
+          </button>
+          <button
+            onclick="supervisorLogout()"
+            class="bg-gray-600 text-white px-6 py-2 rounded hover:bg-gray-700"
+          >
+            🔓 Supervisor Logout
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div
+      id="confirmModal"
+      style="display: none"
+      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden"
+    >
+      <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
+        <h2 class="text-xl font-bold mb-4 text-center">Confirm Login</h2>
+        <p class="text-center mb-4">
+          Logged in as <strong id="loggedInEmail"></strong>
+        </p>
+        <button
+          onclick="proceedToDashboard()"
+          class="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700 mb-2"
+        >
+          ✅ Continue
+        </button>
+        <button
+          onclick="logoutAndReset()"
+          class="w-full bg-gray-500 text-white py-2 rounded hover:bg-gray-600"
+        >
+          🔄 Use Different Account
+        </button>
+      </div>
+    </div>
+
+    <!-- Modal 1: Schedule Input -->
+    <div
+      id="scheduleInputModal"
+      class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center"
+    >
+      <div class="bg-white w-full max-w-lg rounded-2xl shadow p-6">
+        <h3 class="text-xl font-bold mb-4">Edit Schedule</h3>
+
+        <div class="grid gap-4">
+          <div>
+            <label class="block font-medium">Total Internship Hours</label>
+            <input
+              id="totalHoursInput"
+              type="number"
+              min="1"
+              step="0.5"
+              placeholder="e.g., 300"
+              class="w-full px-3 py-2 border rounded"
+            />
+            <p
+              id="totalHoursError"
+              class="text-sm text-red-600 mt-1 hidden"
+            ></p>
+          </div>
+
+          <div>
+            <label class="block font-medium">Start Date</label>
+            <input
+              id="startDateInput"
+              type="date"
+              class="w-full px-3 py-2 border rounded"
+            />
+            <p id="startDateError" class="text-sm text-red-600 mt-1 hidden"></p>
+          </div>
+
+          <div>
+            <label class="block font-medium">Time Mode</label>
+            <div class="flex items-center gap-4 mt-2">
+              <label class="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="timeMode"
+                  value="hoursPerDay"
+                  checked
+                />
+                <span>Start Time + Hours per Day</span>
+              </label>
+              <label class="flex items-center gap-2">
+                <input type="radio" name="timeMode" value="endTime" />
+                <span>Start Time + End Time</span>
+              </label>
+            </div>
+          </div>
+
+          <div id="hoursPerDayBlock" class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-medium">Start Time</label>
+              <input
+                id="startTimeHPD"
+                type="time"
+                class="w-full px-3 py-2 border rounded"
+              />
+            </div>
+            <div>
+              <label class="block font-medium">Hours per Day</label>
+              <input
+                id="hoursPerDay"
+                type="number"
+                min="0.5"
+                step="0.25"
+                placeholder="e.g., 8"
+                class="w-full px-3 py-2 border rounded"
+              />
+            </div>
+            <p id="hpdError" class="text-sm text-red-600 col-span-2 hidden"></p>
+          </div>
+
+          <div id="endTimeBlock" class="grid grid-cols-2 gap-3 hidden">
+            <div>
+              <label class="block font-medium">Start Time</label>
+              <input
+                id="startTimeET"
+                type="time"
+                class="w-full px-3 py-2 border rounded"
+              />
+            </div>
+            <div>
+              <label class="block font-medium">End Time</label>
+              <input
+                id="endTimeET"
+                type="time"
+                class="w-full px-3 py-2 border rounded"
+              />
+            </div>
+            <p id="etError" class="text-sm text-red-600 col-span-2 hidden"></p>
+          </div>
+
+          <div>
+            <label class="block font-medium">Allowed Days</label>
+            <div class="grid grid-cols-4 gap-2 mt-2">
+              <label class="flex items-center gap-2"
+                ><input
+                  type="checkbox"
+                  class="allowedDay"
+                  value="mon"
+                />Mon</label
+              >
+              <label class="flex items-center gap-2"
+                ><input
+                  type="checkbox"
+                  class="allowedDay"
+                  value="tue"
+                />Tue</label
+              >
+              <label class="flex items-center gap-2"
+                ><input
+                  type="checkbox"
+                  class="allowedDay"
+                  value="wed"
+                />Wed</label
+              >
+              <label class="flex items-center gap-2"
+                ><input
+                  type="checkbox"
+                  class="allowedDay"
+                  value="thu"
+                />Thu</label
+              >
+              <label class="flex items-center gap-2"
+                ><input
+                  type="checkbox"
+                  class="allowedDay"
+                  value="fri"
+                />Fri</label
+              >
+              <label class="flex items-center gap-2"
+                ><input
+                  type="checkbox"
+                  class="allowedDay"
+                  value="sat"
+                />Sat</label
+              >
+              <label class="flex items-center gap-2"
+                ><input
+                  type="checkbox"
+                  class="allowedDay"
+                  value="sun"
+                />Sun</label
+              >
+            </div>
+            <p id="daysError" class="text-sm text-red-600 mt-1 hidden"></p>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 mt-6">
+          <button
+            class="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300"
+            onclick="closeScheduleInputModal()"
+          >
+            Cancel
+          </button>
+          <button
+            class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+            onclick="computeAndReviewSchedule()"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal 2: Review -->
+    <div
+      id="scheduleReviewModal"
+      class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center"
+    >
+      <div class="bg-white w-full max-w-lg rounded-2xl shadow p-6">
+        <h3 class="text-xl font-bold mb-4">Review Schedule</h3>
+
+        <div class="grid gap-3 text-sm">
+          <div>
+            <span class="font-semibold">Start Date:</span>
+            <span id="revStartDate">—</span>
+          </div>
+          <div>
+            <span class="font-semibold">End Date:</span>
+            <span id="revEndDate">—</span>
+          </div>
+          <div>
+            <span class="font-semibold">Allowed Days:</span>
+            <span id="revDays">—</span>
+          </div>
+          <div>
+            <span class="font-semibold">Daily Time:</span>
+            <span id="revDailyTime">—</span>
+          </div>
+          <div>
+            <span class="font-semibold">Last Day Time Schedule:</span>
+            <span id="revLastDayTime"></span>
+          </div>
+          <div id="revLastDayNote" class="text-xs text-gray-600"></div>
+        </div>
+
+        <!-- Circular progress chip -->
+        <div class="mt-6 flex items-center justify-center">
+          <div class="relative h-28 w-28">
+            <!-- 100% ring (we just show the number cleanly) -->
+            <div
+              class="absolute inset-0 rounded-full"
+              style="
+                background: conic-gradient(currentColor 100%, #e5e7eb 0);
+                color: rgb(37, 99, 235);
+              "
+            ></div>
+            <div
+              class="absolute inset-2 rounded-full bg-white flex items-center justify-center"
+            >
+              <div class="text-center">
+                <div class="text-lg font-bold" id="revTotalHours">0</div>
+                <div class="text-[11px] uppercase tracking-wide text-gray-500">
+                  hours
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 mt-6">
+          <button
+            class="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300"
+            onclick="backToInput()"
+          >
+            Back
+          </button>
+          <button
+            class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+            onclick="closeScheduleReviewModal(); saveSchedule();"
+          >
+            Done
+          </button>
+          <!-- We’ll add a real Save later -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Include the external JavaScript file -->
+    <script src="../js/supervisor.js"></script>
+  </body>
+</html>
