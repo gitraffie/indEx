@@ -494,6 +494,8 @@ function loadInterns() {
             internList.innerHTML =
                 "<p class='text-sm text-red-600'>❌ Error loading interns.</p>";
         });
+    
+    refreshScheduleDetails();
 }
 
 function enableScheduleEdit() {
@@ -533,32 +535,31 @@ async function saveSchedule() {
         const startDate = document.getElementById("startDateInput").value;
         const totalHours = parseFloat(document.getElementById("totalHoursInput").value);
         const timeMode = document.querySelector('input[name="timeMode"]:checked')?.value;
+        const hoursPerDay = parseFloat(document.getElementById("hoursPerDay").value);
 
         const allowedDays = Array.from(document.querySelectorAll(".allowedDay:checked")).map(d => d.value);
         if (allowedDays.length === 0) throw new Error("Select at least one allowed day.");
 
-        let dailyTimes = {};
+        let dailyTimes = []; // <-- Change from object to array
+
+        // Temporary structure for day->start/end
+        let timeMap = {};
 
         if (timeMode === "hoursPerDay") {
             const startTime = document.getElementById("startTimeHPD").value;
-            const hoursPerDay = parseFloat(document.getElementById("hoursPerDay").value);
             if (!startTime || isNaN(hoursPerDay)) throw new Error("Start time and hours per day are required.");
 
             allowedDays.forEach(day => {
-                // Convert start time to total minutes since midnight
                 let [sh, sm] = startTime.split(":").map(Number);
                 let startMinutes = sh * 60 + sm;
-
-                // Add hoursPerDay converted to minutes
                 let endMinutes = startMinutes + hoursPerDay * 60;
-                endMinutes %= 1440; // wrap around 24 hours
+                endMinutes %= 1440;
 
-                // Convert back to HH:MM
                 let endHour = Math.floor(endMinutes / 60);
                 let endMin = endMinutes % 60;
-
                 let endTime = `${String(endHour).padStart(2, "0")}:${String(endMin).padStart(2, "0")}`;
-                dailyTimes[day] = { start: startTime, end: endTime };
+
+                timeMap[day] = { start: startTime, end: endTime };
             });
 
         } else {
@@ -567,44 +568,53 @@ async function saveSchedule() {
             if (!startTime || !endTime) throw new Error("Start and end times are required.");
 
             allowedDays.forEach(day => {
-                dailyTimes[day] = { start: startTime, end: endTime };
+                timeMap[day] = { start: startTime, end: endTime };
             });
         }
 
         // Hours per day (first day as reference)
         const firstDay = allowedDays[0];
-        const [sh, sm] = dailyTimes[firstDay].start.split(":").map(Number);
-        const [eh, em] = dailyTimes[firstDay].end.split(":").map(Number);
+        const [sh, sm] = timeMap[firstDay].start.split(":").map(Number);
+        const [eh, em] = timeMap[firstDay].end.split(":").map(Number);
         let startTotal = sh * 60 + sm;
         let endTotal = eh * 60 + em;
         let diffMinutes = endTotal - startTotal;
-        if (diffMinutes <= 0) diffMinutes += 1440; // handle wrap around
+        if (diffMinutes <= 0) diffMinutes += 1440;
         const hoursPerDayValue = diffMinutes / 60;
 
         if (hoursPerDayValue <= 0) throw new Error("Daily hours must be greater than zero.");
 
-        // Compute end date
+        // Compute end date & populate dailyTimes array
         const daysNeeded = Math.ceil(totalHours / hoursPerDayValue);
         let currentDate = new Date(startDate);
         let counted = 0;
 
         while (counted < daysNeeded) {
-            const day = currentDate.toLocaleDateString("en-US", { weekday: "short" }).toLowerCase();
-            if (allowedDays.includes(day)) counted++;
+            const dayName = currentDate.toLocaleDateString("en-US", { weekday: "short" }).toLowerCase();
+            if (allowedDays.includes(dayName)) {
+                let dateStr = `${currentDate.getMonth()+1}-${currentDate.getDate()}-${currentDate.getFullYear()}`;
+                dailyTimes.push({
+                    date: dateStr,
+                    day: dayName,
+                    start: timeMap[dayName].start,
+                    end: timeMap[dayName].end
+                });
+                counted++;
+            }
             if (counted < daysNeeded) currentDate.setDate(currentDate.getDate() + 1);
         }
 
         const endDate = currentDate.toISOString().split("T")[0];
 
-        // Get supervisor's email
         const supervisorEmail = auth.currentUser?.email;
         if (!supervisorEmail) throw new Error("User not authenticated.");
 
         await db.collection("schedules").doc("mainSchedule").set({
             startDate,
             endDate,
+            hpd: hoursPerDay,
             allowedDays,
-            dailyTimes,
+            dailyTimes, // <-- Now an array with date, day, start, end
             totalHours,
             supervisorEmail,
             updatedAt: new Date()
@@ -616,6 +626,7 @@ async function saveSchedule() {
         alert("Error: " + err.message);
     }
 }
+
 
 function supervisorLogout() {
     auth
@@ -958,28 +969,61 @@ function refreshScheduleDetails() {
         .then((doc) => {
             if (doc.exists) {
                 const schedule = doc.data();
-                const { startDate, endDate, allowedDays = [], dailyTimes = {}, totalHours = 0 } = schedule;
-
-                let dayLines = [];
-                if (Object.keys(dailyTimes).length) {
-                    DAY_KEYS.forEach((k) => {
-                        if (allowedDays.includes(k) && dailyTimes[k]) {
-                            const { start, end } = dailyTimes[k];
-                            dayLines.push(`${DAY_LABELS[k]}: ${start} - ${end}`);
-                        }
-                    });
-                } else {
-                    allowedDays.forEach((k) => dayLines.push(`${DAY_LABELS[k]}: N/A`));
+                const { startDate, endDate, dailyTimes = [], totalHours = 0 } = schedule || {};
+            
+                function parseDate(dateStr) {
+                    // Handles "9-9-2025" or "10-2-2025" format
+                    const [month, day, year] = dateStr.split('-').map(Number);
+                    return new Date(year, month - 1, day);
                 }
+                
+                function formatDay(day) {
+                    const daysMap = {
+                        mon: "Monday",
+                        tue: "Tuesday",
+                        wed: "Wednesday",
+                        thu: "Thursday",
+                        fri: "Friday",
+                        sat: "Saturday",
+                        sun: "Sunday"
+                    };
+                    return daysMap[day?.toLowerCase()] || day || "N/A";
+                }
+
+
+                const sortedTimes = Array.isArray(dailyTimes)
+                    ? dailyTimes.sort((a, b) => parseDate(a.date) - parseDate(b.date))
+                    : []
+                ;
 
                 scheduleDetails.innerHTML = `
                     <div>
-                        <strong>Date Range:</strong> ${startDate || "N/A"} To ${endDate || "N/A"}<br>
-                        <strong>Days & Times:</strong><br>
-                        <div class="mt-1 text-sm">${dayLines.length ? dayLines.join("<br>") : "N/A"}</div>
-                        <br><strong>Total Hours:</strong> ${Number(totalHours).toFixed(2)} hrs
+                        <strong>Schedule Details:</strong><br>
+                        <table class="table-auto border border-gray-300 mt-2 w-full text-sm">
+                            <thead>
+                                <tr class="bg-gray-100">
+                                    <th class="border px-2 py-1">Date</th>
+                                    <th class="border px-2 py-1">Day</th>
+                                    <th class="border px-2 py-1">Start</th>
+                                    <th class="border px-2 py-1">End</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${sortedTimes.map(entry => `
+                                    <tr>
+                                        <td class="border px-2 py-1">${entry.date || "N/A"}</td>
+                                        <td class="border px-2 py-1">${formatDay(entry.day)}</td>
+                                        <td class="border px-2 py-1">${entry.start || "N/A"}</td>
+                                        <td class="border px-2 py-1">${entry.end || "N/A"}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                        <br><strong>Date Range:</strong> ${startDate || "N/A"} to ${endDate || "N/A"}<br>
+                        <strong>Total Hours:</strong> ${Number(totalHours).toFixed(2)} hrs
                     </div>
                 `;
+
             } else {
                 scheduleDetails.innerHTML = "<span class='text-red-600'>No schedule set.</span>";
             }
@@ -987,7 +1031,8 @@ function refreshScheduleDetails() {
         .catch((err) => {
             console.error("Error refreshing schedule details:", err);
             scheduleDetails.innerHTML = "<p class='text-sm text-red-600'>Error loading schedule details.</p>";
-        });
+        })
+    ;
 }
 
 

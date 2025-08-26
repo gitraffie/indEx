@@ -781,7 +781,11 @@
         }
 
         // 3. Get today's start and end time from dailyTimes map
-        const todayTimes = schedule.dailyTimes?.[todayKey];
+        const todayDateStr = `${new Date().getMonth() + 1}-${new Date().getDate()}-${new Date().getFullYear()}`;
+        const todayTimes = schedule.dailyTimes?.find(
+          t => t.date === todayDateStr
+        );
+
         if (!todayTimes) {
           document.getElementById("result").textContent =
             `❌ No schedule defined for today (${todayKey.toUpperCase()}).`;
@@ -952,41 +956,42 @@
           const internRef = db.collection("interns").doc(auth.currentUser.uid);
           const internDoc = await internRef.get();
           if (!internDoc.exists) {
-              scheduleList.innerHTML = "<li class='text-red-600'>❌ Intern not found.</li>";
-              return;
+            scheduleList.innerHTML = "<li class='text-red-600'>❌ Intern not found.</li>";
+            return;
           }
           const supervisorEmail = internDoc.data().supervisorEmail;
 
-          // 2. Fetch schedule with matching supervisorEmail
+          // 2. Fetch schedule
           const schedulesSnap = await db
-              .collection("schedules")
-              .where("supervisorEmail", "==", supervisorEmail)
-              .limit(1)
-              .get();
+            .collection("schedules")
+            .where("supervisorEmail", "==", supervisorEmail)
+            .limit(1)
+            .get();
 
-          scheduleList.innerHTML = ""; // clear loading
+          scheduleList.innerHTML = "";
 
           if (schedulesSnap.empty) {
-              scheduleList.innerHTML = "<li class='text-gray-500'>No schedule set by your supervisor.</li>";
-              return;
+            scheduleList.innerHTML = "<li class='text-gray-500'>No schedule set by your supervisor.</li>";
+            return;
           }
 
-          const dayOrder = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-
-          // 3. Display schedule (using dailyTimes map)
           const scheduleData = schedulesSnap.docs[0].data();
+          const dailyTimes = scheduleData.dailyTimes || [];
 
-          // Create table container
+          // 3. Sort dailyTimes by date
+          dailyTimes.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+          // 4. Create table
           const table = document.createElement("table");
-          table.className = "w-full border-collapse border border-blue-300 mt-4 min-w-full sm:table-auto";
+          table.className = "w-full border-collapse border border-blue-300 mt-4";
 
-          // Create table header
           table.innerHTML = `
             <thead class="bg-blue-100">
               <tr>
-              <th class="border border-blue-300 px-2 py-2 text-sm sm:text-sm sm:px-2">DAY</th>
-              <th class="border border-blue-300 px-2 py-2 text-sm sm:text-sm sm:px-2">TIME IN</th>
-              <th class="border border-blue-300 px-2 py-2 text-sm sm:text-sm sm:px-2">TIME OUT</th>
+                <th class="border border-blue-300 px-2 py-2 text-sm">DATE</th>
+                <th class="border border-blue-300 px-2 py-2 text-sm">DAY</th>
+                <th class="border border-blue-300 px-2 py-2 text-sm">TIME IN</th>
+                <th class="border border-blue-300 px-2 py-2 text-sm">TIME OUT</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -994,37 +999,26 @@
 
           const tbody = table.querySelector("tbody");
 
-          // Filter allowedDays and sort according to dayOrder
-          const orderedDays = dayOrder.filter(d => 
-            scheduleData.allowedDays.includes(d)
-          );
-
-          // Loop through ordered days
-          orderedDays.forEach(day => {
-            const times = scheduleData.dailyTimes[day];
-            if (!times) return; // Skip if no time entry
-
+          dailyTimes.forEach(entry => {
+            const formalDay = entry.day.charAt(0).toUpperCase() + entry.day.slice(1);
             const row = document.createElement("tr");
-
-            // Capitalize first letter of day (optional)
-            const formattedDay = day.charAt(0).toUpperCase() + day.slice(1);
-
             row.innerHTML = `
-              <td class="border border-blue-300 px-2 py-2 text-sm sm:text-base sm:px-4">${formattedDay}</td>
-              <td class="border border-blue-300 px-2 py-2 text-sm sm:text-base sm:px-4">${to12Hour(times.start)}</td>
-              <td class="border border-blue-300 px-2 py-2 text-sm sm:text-base sm:px-4">${to12Hour(times.end)}</td>
+              <td class="border border-blue-300 px-2 py-2">${entry.date || "N/A"}</td>
+              <td class="border border-blue-300 px-2 py-2">${formalDay}</td>
+              <td class="border border-blue-300 px-2 py-2">${to12Hour(entry.start) || "N/A"}</td>
+              <td class="border border-blue-300 px-2 py-2">${to12Hour(entry.end) || "N/A"}</td>
             `;
             tbody.appendChild(row);
           });
 
-          scheduleList.innerHTML = ""; // clear previous content
           scheduleList.appendChild(table);
 
         } catch (err) {
           console.error("Schedule error:", err);
           scheduleList.innerHTML = "<li class='text-red-600'>❌ Failed to load schedule.</li>";
-        } 
+        }
       }
+
 
       function showCurrentLocationOnMap(lat, lng) {
         if (map) {
@@ -1103,7 +1097,10 @@
                 const schedule = scheduleDoc.data();
                 const dayKeys = ["sun","mon","tue","wed","thu","fri","sat"];
                 const todayKey = dayKeys[new Date().getDay()];
-                const todayTimes = schedule.dailyTimes?.[todayKey];
+                const todayDateStr = `${new Date().getMonth() + 1}-${new Date().getDate()}-${new Date().getFullYear()}`;
+                const todayTimes = schedule.dailyTimes?.find(
+                  t => t.date === todayDateStr
+                );
                 
                 if (!todayTimes) {
                     document.getElementById("result").textContent =
@@ -1160,6 +1157,43 @@
                       hoursLeft: hoursLeft,
                       totalHoursSpent: newTotalHoursSpent
                     });
+
+                    if (hoursLeft > 0 && hoursLeft !== totalHours) {
+                      const { startDate, dailyTimes, hpd } = schedule; // hpd = hours per day
+
+                      if (startDate && dailyTimes && hpd) {
+                        let adjustedSchedule = [];
+                        let remainingHours = hoursLeft;
+                        let currentDate = new Date(startDate);
+
+                        while (remainingHours > 0) {
+                          const dayKey = ["sun","mon","tue","wed","thu","fri","sat"][currentDate.getDay()];
+                          const todaySchedule = dailyTimes.find(dt => dt.day === dayKey);
+
+                          if (todaySchedule) {
+                            const workHours = Math.min(hpd, remainingHours);
+                            adjustedSchedule.push({
+                              date: `${currentDate.getMonth()+1}-${currentDate.getDate()}-${currentDate.getFullYear()}`,
+                              day: dayKey,
+                              start: todaySchedule.start,
+                              end: todaySchedule.end,
+                              hours: workHours
+                            });
+                            remainingHours -= workHours;
+                          }
+                          currentDate.setDate(currentDate.getDate() + 1);
+                        }
+
+                        await db.collection("interns_schedules")
+                        .doc(auth.currentUser.uid)
+                        .set({
+                          internEmail: auth.currentUser.email,
+                          adjusted_sched: adjustedSchedule,
+                          updatedAt: new Date()
+                        }, { merge: true });
+                      }
+                  }
+
                   }
 
                   document.getElementById("result").textContent = "✅ Time Out recorded successfully.";
