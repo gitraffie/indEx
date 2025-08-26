@@ -545,12 +545,18 @@ async function saveSchedule() {
             if (!startTime || isNaN(hoursPerDay)) throw new Error("Start time and hours per day are required.");
 
             allowedDays.forEach(day => {
-                // End time is start time + hoursPerDay
+                // Convert start time to total minutes since midnight
                 let [sh, sm] = startTime.split(":").map(Number);
-                let et = sh + hoursPerDay;
-                let endHour = Math.floor(et);
-                let endMin = Math.round((et - endHour) * 60);
-                if (endHour >= 24) endHour -= 24;
+                let startMinutes = sh * 60 + sm;
+
+                // Add hoursPerDay converted to minutes
+                let endMinutes = startMinutes + hoursPerDay * 60;
+                endMinutes %= 1440; // wrap around 24 hours
+
+                // Convert back to HH:MM
+                let endHour = Math.floor(endMinutes / 60);
+                let endMin = endMinutes % 60;
+
                 let endTime = `${String(endHour).padStart(2, "0")}:${String(endMin).padStart(2, "0")}`;
                 dailyTimes[day] = { start: startTime, end: endTime };
             });
@@ -569,7 +575,11 @@ async function saveSchedule() {
         const firstDay = allowedDays[0];
         const [sh, sm] = dailyTimes[firstDay].start.split(":").map(Number);
         const [eh, em] = dailyTimes[firstDay].end.split(":").map(Number);
-        const hoursPerDayValue = eh + em / 60 - (sh + sm / 60);
+        let startTotal = sh * 60 + sm;
+        let endTotal = eh * 60 + em;
+        let diffMinutes = endTotal - startTotal;
+        if (diffMinutes <= 0) diffMinutes += 1440; // handle wrap around
+        const hoursPerDayValue = diffMinutes / 60;
 
         if (hoursPerDayValue <= 0) throw new Error("Daily hours must be greater than zero.");
 
@@ -586,12 +596,18 @@ async function saveSchedule() {
 
         const endDate = currentDate.toISOString().split("T")[0];
 
+        // Get supervisor's email
+        const supervisorEmail = auth.currentUser?.email;
+        if (!supervisorEmail) throw new Error("User not authenticated.");
+
         await db.collection("schedules").doc("mainSchedule").set({
             startDate,
             endDate,
             allowedDays,
             dailyTimes,
             totalHours,
+            supervisorEmail,
+            updatedAt: new Date()
         });
 
         alert("Schedule saved successfully!");

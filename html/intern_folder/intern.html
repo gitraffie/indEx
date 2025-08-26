@@ -17,9 +17,51 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
     />
-    <style>
+      <style>
       #map {
         height: 256px;
+      }
+      
+      /* Circular Progress Bar Styles */
+      .progress-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        margin: 20px 0;
+      }
+      
+      .circular-progress {
+        position: relative;
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        background: conic-gradient(#4174b8 var(--progress), #e0e0e0 0deg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      
+      .circular-progress::before {
+        content: "";
+        position: absolute;
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        background-color: white;
+      }
+      
+      .progress-value {
+        position: relative;
+        font-size: 24px;
+        font-weight: bold;
+        color: #4174b8;
+      }
+      
+      .progress-label {
+        text-align: center;
+        margin-top: 10px;
+        font-weight: 600;
+        color: #333;
       }
     </style>
   </head>
@@ -231,7 +273,7 @@
           <li>
             <a
               id="navItem"
-              href="/html/intern_folder/intern_time.html"
+              href="#"
               class="flex items-center p-3 text-white rounded-lg hover:bg-gray-100 hover:text-black transition"
             >
               <i class="fas fa-clock mr-3"></i>
@@ -241,7 +283,7 @@
           <li>
             <a
               id="navItem"
-              href="/intern/intern_tasks.html"
+              href="#"
               class="flex items-center p-3 text-white rounded-lg hover:bg-gray-100 hover:text-black transition"
             >
               <i class="fas fa-tasks mr-3"></i>
@@ -321,14 +363,18 @@
       <!--<div id="map" class="h-70 rounded-xl shadow mb-4"></div>-->
       <div class="flex justify-center mb-4">
         <button
+          id="timeInButton"
           onclick="checkGeofence()"
           class="bg-blue-600 text-white px-6 py-2 rounded-lg shadow hover:bg-blue-700 transition"
+          style="opacity: 1;"
         >
           Time In
         </button>
         <button
+          id="timeOutButton"
           onclick="timeOut()"
           class="bg-red-600 text-white px-6 py-2 rounded-lg shadow hover:bg-red-700 transition ml-4"
+          style="opacity: 1;"
         >
           Time Out
         </button>
@@ -337,6 +383,16 @@
         id="result"
         class="text-center text-lg font-semibold text-gray-800"
       ></p>
+
+      <!-- Circular Progress Bar for Total Hours -->
+      <div class="bg-white shadow rounded-lg p-6 mb-6">
+        <div class="progress-container">
+          <div class="circular-progress" id="hoursProgress" style="--progress: 0deg;">
+            <span class="progress-value" id="hoursValue"></span>
+          </div>
+        </div>
+        <div class="progress-label">Total Hours Completed</div>
+      </div>
 
       <div class="bg-white shadow rounded-lg p-6 mb-6">
         <h2 class="text-lg font-semibold mb-4">
@@ -631,31 +687,38 @@
                   "<li class='text-red-600'>❌ Failed to load tasks.</li>";
               }
 
-              // Load supervisor's schedule for this intern
-              displaySupervisorSchedule();
+          // Load supervisor's schedule for this intern
+          displaySupervisorSchedule();
+          
+          // Load total hours for progress bar
+          loadTotalHours();
+          loadHoursLeft();
+          refreshBtn();
 
-              modal.style.display = "none";
+          modal.style.display = "none";
 
-              // ✅ At the very end of onAuthStateChanged
-              setTimeout(() => {
-                const loading = document.getElementById("loadingScreen");
-                loading.classList.add("opacity-0");
-                setTimeout(() => (loading.style.display = "none"), 300);
-              }, 100);
+          // ✅ At the very end of onAuthStateChanged
+          setTimeout(() => {
+            const loading = document.getElementById("loadingScreen");
+            loading.classList.add("opacity-0");
+            setTimeout(() => (loading.style.display = "none"), 300);
+          }, 100);
 
-            window.onload = () => {
-              // ✅ Fix: define loading before using it
-              const loading = document.getElementById("loadingScreen");
-              setTimeout(() => {
-                loading.classList.add("opacity-0");
-                setTimeout(() => (loading.style.display = "none"), 500);
-              }, 300);
-            };
-          } catch (err) {
-            console.error("Failed to load intern data:", err);
+        window.onload = () => {
+          // ✅ Fix: define loading before using it
+          const loading = document.getElementById("loadingScreen");
+          setTimeout(() => {
+            loading.classList.add("opacity-0");
+            setTimeout(() => (loading.style.display = "none"), 500);
+          }, 300);
+        };
+            } catch (err) {
+              console.error("Failed to load intern data:", err);
+            }
           }
-        }
-      });
+        });
+
+        
 
       function proceedToDashboard() {
         document.getElementById("confirmModal").style.display = "none";
@@ -680,82 +743,79 @@
 
       async function checkGeofence() {
         if (!geofenceCenter || !geofenceRadius) {
-          document.getElementById("result").textContent =
-            "❌ Geofence not set.";
+          document.getElementById("result").textContent = "❌ Geofence not set.";
           return;
         }
 
         if (!navigator.geolocation) {
-          document.getElementById("result").textContent =
-            "❌ Geolocation not supported.";
+          document.getElementById("result").textContent = "❌ Geolocation not supported.";
           return;
         }
 
-        document.getElementById("result").textContent =
-          "⏳ Checking location...";
+        document.getElementById("result").textContent = "⏳ Checking location...";
 
         // 1. Fetch supervisor's schedule
         let scheduleDoc;
         try {
-          scheduleDoc = await db
-            .collection("schedules")
-            .doc(currentIntern.supervisorEmail)
-            .get();
+          scheduleDoc = await db.collection("schedules").doc("mainSchedule").get();
           if (!scheduleDoc.exists) {
-            document.getElementById("result").textContent =
-              "❌ No schedule set by your supervisor.";
+            document.getElementById("result").textContent = "❌ No schedule set by your supervisor.";
             return;
           }
         } catch (err) {
-          document.getElementById("result").textContent =
-            "❌ Failed to load schedule.";
+          document.getElementById("result").textContent = "❌ Failed to load schedule.";
           return;
         }
 
         const schedule = scheduleDoc.data();
-        const allowedDays = Array.isArray(schedule.allowedDays)
-          ? schedule.allowedDays
-          : [];
-        const startTime = schedule.startTime || "00:00";
-        const endTime = schedule.endTime || "23:59";
+        const allowedDays = Array.isArray(schedule.allowedDays) ? schedule.allowedDays : [];
 
-        // 2. Check if today is allowed
-        const today = new Date();
-        const dayNames = [
-          "Sunday",
-          "Monday",
-          "Tuesday",
-          "Wednesday",
-          "Thursday",
-          "Friday",
-          "Saturday",
-        ];
-        const dayAbbr = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-        const todayAbbr = dayAbbr[today.getDay()];
-        if (!allowedDays.includes(todayAbbr)) {
-          document.getElementById(
-            "result"
-          ).textContent = `❌ You are not allowed to time in today (${todayAbbr}).`;
+        // 2. Determine today's day key
+        const dayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+        const todayKey = dayKeys[new Date().getDay()];
+
+        if (!allowedDays.includes(todayKey)) {
+          document.getElementById("result").textContent =
+            `❌ You are not allowed to time in today (${todayKey.toUpperCase()}).`;
           return;
         }
 
-        // 3. Check if current time is within allowed time
-        const nowMinutes = today.getHours() * 60 + today.getMinutes();
+        // 3. Get today's start and end time from dailyTimes map
+        const todayTimes = schedule.dailyTimes?.[todayKey];
+        if (!todayTimes) {
+          document.getElementById("result").textContent =
+            `❌ No schedule defined for today (${todayKey.toUpperCase()}).`;
+          return;
+        }
+
+        const startTime = todayTimes.start;
+        const endTime = todayTimes.end;
+
+        // 4. Validate current time
+        const now = new Date();
+        const nowMinutes = now.getHours() * 60 + now.getMinutes();
         const [startHour, startMin] = startTime.split(":").map(Number);
         const [endHour, endMin] = endTime.split(":").map(Number);
         const startMinutes = startHour * 60 + startMin;
         const endMinutes = endHour * 60 + endMin;
 
-        if (nowMinutes < startMinutes || nowMinutes > endMinutes) {
-          document.getElementById(
-            "result"
-          ).textContent = `❌ You can only time in between ${to12Hour(
-            startTime
-          )} and ${to12Hour(endTime)}.`;
-          return;
+        /*let isWithinSchedule;
+        if (endMinutes < startMinutes) {
+          // Overnight shift (e.g., 22:00 - 02:00)
+          isWithinSchedule = (nowMinutes >= startMinutes || nowMinutes <= endMinutes);
+        } else {
+          // Same-day shift
+          isWithinSchedule = (nowMinutes >= startMinutes && nowMinutes <= endMinutes);
         }
 
-        // 4. Check geofence
+        if (!isWithinSchedule) {
+          document.getElementById("result").textContent =
+            `❌ You can only time in between ${to12Hour(startTime)} and ${to12Hour(endTime)}.`;
+          return;
+        }*/
+
+
+        // 5. Geolocation check
         navigator.geolocation.getCurrentPosition(
           (pos) => {
             const lat = pos.coords.latitude;
@@ -763,67 +823,116 @@
 
             showCurrentLocationOnMap(lat, lng);
 
-            function getDistance(lat1, lng1, lat2, lng2) {
-              const R = 6371000; // meters
-              const dLat = ((lat2 - lat1) * Math.PI) / 180;
-              const dLng = ((lng2 - lng1) * Math.PI) / 180;
-              const a =
-                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos((lat1 * Math.PI) / 180) *
-                  Math.cos((lat2 * Math.PI) / 180) *
-                  Math.sin(dLng / 2) *
-                  Math.sin(dLng / 2);
-              const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-              return R * c;
-            }
-
-            const distance = getDistance(
-              lat,
-              lng,
-              geofenceCenter[0],
-              geofenceCenter[1]
-            );
+            const distance = getDistance(lat, lng, geofenceCenter[0], geofenceCenter[1]);
 
             if (distance <= geofenceRadius) {
+              document.getElementById("result").textContent = "✅ You are inside the geofence.";
+              const startDateTime = new Date();
+              startDateTime.setHours(startHour, startMin, 0, 0);
+
+              // 2 hours before start
+              const earliestTimeIn = new Date(startDateTime.getTime() - 2 * 60 * 60 * 1000);
+              const latestTimeIn = startDateTime;
+
+              if (now < earliestTimeIn) {
+                document.getElementById("result").textContent =
+                  `❌ Too early! Earliest allowed: ${to12Hour(startTime)} minus 2 hours.`;
+                return;
+              } else if (now > latestTimeIn) {
+                document.getElementById("result").textContent =
+                  `❌ Late! Time-in allowed only up to your scheduled start: ${to12Hour(startTime)}.`;
+                return;
+              }
+
+              // If we reached here, they are allowed to time in
               document.getElementById("result").textContent =
-                "✅ You are inside the geofence and allowed to time in. Time In recorded!";
+                "✅ You are inside the geofence and within allowed time to time in. Time In recorded!";
 
-              // Record time-in in Firestore
-              db.collection("interns_inside")
-                .doc(auth.currentUser.uid)
-                .set({
-                  internEmail: auth.currentUser.email,
-                  supervisorEmail: currentIntern.supervisorEmail,
-                  timeIn: new Date(),
-                  location: { lat, lng },
-                })
-                .then(() => {
-                  console.log("Time-in recorded in interns_inside.");
-                })
-                .catch((err) => {
-                  console.error("Failed to record time-in:", err);
-                  document.getElementById("result").textContent +=
-                    " (Failed to record time-in)";
-                });
+              const internRef = db.collection("interns_inside").doc(auth.currentUser.uid);
 
-              // Show intern marker on map
+              internRef.get().then((doc) => {
+                if (doc.exists) {
+                  // Document exists, update it
+                  internRef
+                    .update({
+                      timeLogs: firebase.firestore.FieldValue.arrayUnion({
+                        timeIn: new Date(),
+                        location: { lat, lng },
+                      }),
+                      internEmail: auth.currentUser.email,
+                      supervisorEmail: currentIntern.supervisorEmail,
+                      status: "inside",
+                      recentTimeIn: new Date(),
+                    })
+                    .then(() => {
+                      loadTotalHours();
+                      loadHoursLeft();
+                    })
+                    .catch((err) => {
+                      console.error("Failed to record time-in:", err);
+                      document.getElementById("result").textContent += " (Failed to record time-in)";
+                    })
+                  ;
+                }
+                else {
+                  // Document does not exist, create new one
+                  internRef
+                    .set({
+                      timeLogs: [
+                        {
+                          timeIn: new Date(),
+                          location: { lat, lng },
+                        },
+                      ],
+                      internEmail: auth.currentUser.email,
+                      supervisorEmail: currentIntern.supervisorEmail,
+                      status: "inside",
+                      hoursLeft: $globalTotalHours,
+                      recentTimeIn: new Date(),
+                      createdAt: new Date(),
+                    })
+                    .then(() => {
+                      loadTotalHours();
+                      loadHoursLeft();
+                    })
+                    .catch((err) => {
+                      console.error("Failed to create new time-in record:", err);
+                      document.getElementById("result").textContent += " (Failed to create record)";
+                    })
+                  ;
+                }
+              });
+
+
               if (map) {
                 if (internMarker) map.removeLayer(internMarker);
-                internMarker = L.marker([lat, lng])
-                  .addTo(map)
+                internMarker = L.marker([lat, lng]).addTo(map)
                   .bindPopup("Your Location")
                   .openPopup();
               }
+
+              refreshBtn();
             } else {
-              document.getElementById("result").textContent =
-                "❌ You are outside the geofence.";
+              document.getElementById("result").textContent = "❌ You are outside the geofence.";
             }
           },
-          (err) => {
-            document.getElementById("result").textContent =
-              "❌ Unable to get location.";
+          () => {
+            document.getElementById("result").textContent = "❌ Unable to get location.";
           }
         );
+
+        function getDistance(lat1, lng1, lat2, lng2) {
+          const R = 6371000;
+          const dLat = ((lat2 - lat1) * Math.PI) / 180;
+          const dLng = ((lng2 - lng1) * Math.PI) / 180;
+          const a =
+            Math.sin(dLat / 2) ** 2 +
+            Math.cos((lat1 * Math.PI) / 180) *
+              Math.cos((lat2 * Math.PI) / 180) *
+              Math.sin(dLng / 2) ** 2;
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          return R * c;
+        }
       }
 
       function to12Hour(timeStr) {
@@ -839,40 +948,82 @@
         scheduleList.innerHTML = "<li class='text-gray-500'>Loading schedule...</li>";
 
         try {
-          // Fetch the schedule document by supervisor's email
-          const docRef = db
-            .collection("schedules")
-            .doc(currentIntern.supervisorEmail);
-          const doc = await docRef.get();
+          // 1. Fetch intern's supervisorEmail
+          const internRef = db.collection("interns").doc(auth.currentUser.uid);
+          const internDoc = await internRef.get();
+          if (!internDoc.exists) {
+              scheduleList.innerHTML = "<li class='text-red-600'>❌ Intern not found.</li>";
+              return;
+          }
+          const supervisorEmail = internDoc.data().supervisorEmail;
 
-          scheduleList.innerHTML = ""; // Clear loading message
+          // 2. Fetch schedule with matching supervisorEmail
+          const schedulesSnap = await db
+              .collection("schedules")
+              .where("supervisorEmail", "==", supervisorEmail)
+              .limit(1)
+              .get();
 
-          if (!doc.exists) {
-            scheduleList.innerHTML =
-              "<li class='text-gray-500'>No schedule set by your supervisor.</li>";
-            return;
+          scheduleList.innerHTML = ""; // clear loading
+
+          if (schedulesSnap.empty) {
+              scheduleList.innerHTML = "<li class='text-gray-500'>No schedule set by your supervisor.</li>";
+              return;
           }
 
-          const data = doc.data();
+          const dayOrder = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
-          // Display the schedule fields
-          const days = Array.isArray(data.allowedDays)
-            ? data.allowedDays.join(", ")
-            : data.allowedDays || "No days set";
-          const startTime = to12Hour(data.startTime);
-          const endTime = to12Hour(data.endTime);
+          // 3. Display schedule (using dailyTimes map)
+          const scheduleData = schedulesSnap.docs[0].data();
 
-          const li = document.createElement("li");
-          li.className = "border border-blue-200 rounded p-4";
-          li.innerHTML = `
-          <div class="font-semibold text-blue-700">Days: ${days}</div>
-          <div class="text-gray-700">Time: ${startTime} - ${endTime}</div>`;
-          scheduleList.appendChild(li);
+          // Create table container
+          const table = document.createElement("table");
+          table.className = "w-full border-collapse border border-blue-300 mt-4 min-w-full sm:table-auto";
+
+          // Create table header
+          table.innerHTML = `
+            <thead class="bg-blue-100">
+              <tr>
+              <th class="border border-blue-300 px-2 py-2 text-sm sm:text-sm sm:px-2">DAY</th>
+              <th class="border border-blue-300 px-2 py-2 text-sm sm:text-sm sm:px-2">TIME IN</th>
+              <th class="border border-blue-300 px-2 py-2 text-sm sm:text-sm sm:px-2">TIME OUT</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          `;
+
+          const tbody = table.querySelector("tbody");
+
+          // Filter allowedDays and sort according to dayOrder
+          const orderedDays = dayOrder.filter(d => 
+            scheduleData.allowedDays.includes(d)
+          );
+
+          // Loop through ordered days
+          orderedDays.forEach(day => {
+            const times = scheduleData.dailyTimes[day];
+            if (!times) return; // Skip if no time entry
+
+            const row = document.createElement("tr");
+
+            // Capitalize first letter of day (optional)
+            const formattedDay = day.charAt(0).toUpperCase() + day.slice(1);
+
+            row.innerHTML = `
+              <td class="border border-blue-300 px-2 py-2 text-sm sm:text-base sm:px-4">${formattedDay}</td>
+              <td class="border border-blue-300 px-2 py-2 text-sm sm:text-base sm:px-4">${to12Hour(times.start)}</td>
+              <td class="border border-blue-300 px-2 py-2 text-sm sm:text-base sm:px-4">${to12Hour(times.end)}</td>
+            `;
+            tbody.appendChild(row);
+          });
+
+          scheduleList.innerHTML = ""; // clear previous content
+          scheduleList.appendChild(table);
+
         } catch (err) {
           console.error("Schedule error:", err);
-          scheduleList.innerHTML =
-            "<li class='text-red-600'>❌ Failed to load schedule.</li>";
-        }
+          scheduleList.innerHTML = "<li class='text-red-600'>❌ Failed to load schedule.</li>";
+        } 
       }
 
       function showCurrentLocationOnMap(lat, lng) {
@@ -906,7 +1057,7 @@
         try {
             scheduleDoc = await db
               .collection("schedules")
-              .doc(currentIntern.supervisorEmail)
+              .doc("mainSchedule")
               .get();
             if (!scheduleDoc.exists) {
               document.getElementById("result").textContent =
@@ -948,21 +1099,76 @@
               );
 
               if (distance <= geofenceRadius) {
-                try {
-                  await db
-                    .collection("interns_inside")
-                    .doc(auth.currentUser.uid)
-                    .update({
-                      timeOut: new Date(),
-                      lastLocation: { lat, lng },
-                    });
-
-                  document.getElementById("result").textContent =
-                    "✅ Time Out recorded successfully.";
-                } catch (err) {
-                    console.error("Failed to record time out:", err);
+                // 1. Get today's schedule again for validation
+                const schedule = scheduleDoc.data();
+                const dayKeys = ["sun","mon","tue","wed","thu","fri","sat"];
+                const todayKey = dayKeys[new Date().getDay()];
+                const todayTimes = schedule.dailyTimes?.[todayKey];
+                
+                if (!todayTimes) {
                     document.getElementById("result").textContent =
-                      "❌ Failed to record time out.";
+                        `❌ No schedule defined for today (${todayKey.toUpperCase()}).`;
+                    return;
+                }
+
+                const [endHour, endMin] = todayTimes.end.split(":").map(Number);
+                const endDateTime = new Date();
+                endDateTime.setHours(endHour, endMin, 0, 0);
+
+                const now = new Date();
+                if (now < endDateTime) {
+                    document.getElementById("result").textContent =
+                        `❌ You cannot time out yet. Scheduled end time: ${to12Hour(todayTimes.end)}.`;
+                    return; // Stop execution if current time is before end
+                }
+                
+                try {
+                  const internRef = db.collection("interns_inside").doc(auth.currentUser.uid);
+
+                  // 1. Set timeOut first
+                  await internRef.update({
+                    timeOut: new Date(),
+                    location: { lat, lng },
+                    status: "outside",
+                    updatedAt: new Date()
+                  });
+
+                  // 2. Fetch document to get recentTimeIn & totalHours
+                  const internDoc = await internRef.get();
+                  if (!internDoc.exists) throw new Error("Intern record not found.");
+
+                  const data = internDoc.data();
+                  const recentTimeIn = data.recentTimeIn ? data.recentTimeIn.toDate() : null;
+                  const timeOut = data.timeOut ? data.timeOut.toDate() : null;
+                  const totalHours = globalTotalHours || 0;
+                  const totalHoursRem = Number(data.totalHoursSpent) || 0;
+
+                  if (recentTimeIn && timeOut) {
+                    // 3. Calculate hours spent
+                    const diffMs = timeOut - recentTimeIn; // in ms
+                    const hoursSpent = diffMs / (1000 * 60 * 60); // convert to hours
+
+                    // 4. Deduct from totalHours
+                    const hoursLeft = Math.max(totalHours - hoursSpent, 0);
+
+                    //Append to totalHoursSpent
+                    const newTotalHoursSpent = totalHoursRem + hoursSpent;
+
+                    // 5. Update interns_inside with hoursSpent & hoursLeft
+                    await internRef.update({
+                      hoursSpent: firebase.firestore.FieldValue.increment(hoursSpent),
+                      hoursLeft: hoursLeft,
+                      totalHoursSpent: newTotalHoursSpent
+                    });
+                  }
+
+                  document.getElementById("result").textContent = "✅ Time Out recorded successfully.";
+                  loadTotalHours();
+                  loadHoursLeft();
+                  refreshBtn();
+                } catch (err) {
+                  console.error("Failed to record time out:", err);
+                  document.getElementById("result").textContent = "❌ Failed to record time out.", err.message;
                 }
 
                 if (map) {
@@ -982,6 +1188,90 @@
               "❌ Unable to get location.";
           }
         );
+      }
+
+      let globalTotalHours = 40;
+
+      // Function to load total hours and update progress bar
+      async function loadTotalHours() {
+        try {
+          const scheduleRef = await db.collection("schedules").doc("mainSchedule").get();
+          if (!scheduleRef.exists) {
+            console.warn("mainSchedule not found");
+            return;
+          }
+          const totalHours = scheduleRef.data().totalHours || 0;
+          globalTotalHours = totalHours;
+        } catch (err) {
+          console.error("Error loading total hours:", err);
+        }
+      }
+
+      async function loadHoursLeft() {
+        if (!auth.currentUser) return;
+
+        const totalHours = globalTotalHours;
+
+        try {
+          const internRef = db.collection("interns_inside").doc(auth.currentUser.uid);
+          const internDoc = await internRef.get();
+
+          if (!internDoc.exists) {
+            console.error("Intern record not found.");
+            return;
+          }
+
+          const data = internDoc.data();
+
+          const hoursLeft = Math.round(Number(data.hoursLeft) || 0); // Round to whole number
+
+          const hoursValue = document.getElementById("hoursValue");
+          const hoursProgress = document.getElementById("hoursProgress");
+
+          // Display hoursLeft on the circle
+          hoursValue.textContent = `${hoursLeft} hrs`;
+
+          // Progress is how much of totalHours is still left
+          const progressPercent = totalHours > 0 ? (hoursLeft / totalHours) * 100 : 0;
+          const degrees = (progressPercent / 100) * 360;
+
+          // Update CSS variable to fill the circle
+          hoursProgress.style.setProperty("--progress", `${degrees}deg`);
+        } catch (err) {
+          console.error("Failed to load hours left:", err);
+        }
+      }
+
+      async function refreshBtn() {
+        try {
+          const internRef = db.collection("interns_inside").doc(auth.currentUser.uid);
+          const internDoc = await internRef.get();
+
+          if (!internDoc.exists) {
+            console.error("Intern record not found.");
+            return;
+          }
+
+          const data = internDoc.data();
+          const status = data.status;
+          const timeInBtn = document.getElementById("timeInButton");
+          const timeOutBtn = document.getElementById("timeOutButton");
+
+          if (status === "inside") {
+            timeInBtn.disabled = true;
+            timeOutBtn.disabled = false;
+            timeInBtn.style.opacity = 0.5;
+            timeOutBtn.style.opacity = 1;
+          } else {
+            timeInBtn.disabled = false;
+            timeOutBtn.disabled = true;
+            timeOutBtn.style.opacity = 0.5;
+            timeInBtn.style.opacity = 1;
+          }
+
+        } catch (error) {
+          alert("Error fetching status:" + error);
+        }
       }
     </script>
 
@@ -1008,6 +1298,8 @@
 
       mobileMenuButton.addEventListener("click", toggleSidebar);
       overlay.addEventListener("click", toggleSidebar);
+
+      window.addEventListener("DOMContentLoaded", loadTotalHours);
 
       // Close sidebar when clicking outside on mobile
       window.addEventListener("resize", function () {
