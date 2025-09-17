@@ -1,7 +1,3 @@
-//import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-//import { getAuth } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-//import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-
 // Firebase Configuration
 const firebaseConfig = {
     apiKey: "AIzaSyDaCCFqs7cwKMiicnlP2Ig3s-WHw8gyZts",
@@ -21,28 +17,7 @@ const db = firebase.firestore();
 let isRegisterMode = false;
 let map, marker, circle;
 let confirmationShown = false;
-let globalType = "unified";
-
-// Constants
-const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-const DAY_LABELS = {
-    mon: "Mon",
-    tue: "Tue",
-    wed: "Wed",
-    thu: "Thu",
-    fri: "Fri",
-    sat: "Sat",
-    sun: "Sun",
-};
-const KEY_TO_JSWD = {
-    sun: 0,
-    mon: 1,
-    tue: 2,
-    wed: 3,
-    thu: 4,
-    fri: 5,
-    sat: 6,
-}; // Date.getDay()
+let selectedRoomCode = null;
 
 // Event Listeners
 document.addEventListener('DOMContentLoaded', function() {
@@ -62,19 +37,6 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
-
-    // Toggle time mode blocks
-    document.addEventListener("change", (e) => {
-        if (e.target && e.target.name === "timeMode") {
-            const mode = e.target.value; // 'hoursPerDay' | 'endTime'
-            document
-                .getElementById("hoursPerDayBlock")
-                .classList.toggle("hidden", mode !== "hoursPerDay");
-            document
-                .getElementById("endTimeBlock")
-                .classList.toggle("hidden", mode !== "endTime");
-        }
-    });
 });
 
 // Authentication State Change
@@ -87,9 +49,6 @@ window.onload = () => {
                 .limit(1)
                 .get();
             if (snapshot.empty) {
-                alert(
-                    "⚠️ This email is not registered as a supervisor. Logging out."
-                );
                 await auth.signOut();
                 location.reload();
                 return;
@@ -202,6 +161,7 @@ function onMapClick(e) {
 
     marker = L.marker(e.latlng).addTo(map);
     circle = L.circle(e.latlng, { radius: radius }).addTo(map);
+    map.panTo(e.latlng); // Pan to the clicked location without changing zoom level
 }
 
 function initMap() {
@@ -213,10 +173,10 @@ function initMap() {
     disableGeofenceEdit(); // Disable editing by default
 }
 
-function loadGeofence() {
-    const email = auth.currentUser.email;
+function loadGeofence(joinCode) {
+    if (!joinCode) return;
     db.collection("geofences")
-        .doc(email)
+        .doc(joinCode)
         .get()
         .then((doc) => {
             if (doc.exists) {
@@ -231,6 +191,15 @@ function loadGeofence() {
                 marker = L.marker(latlng).addTo(map);
                 circle = L.circle(latlng, { radius: radius }).addTo(map);
                 map.setView(latlng, 16);
+                map.invalidateSize();
+            } else {
+                // No geofence for this room, reset map
+                if (marker) map.removeLayer(marker);
+                if (circle) map.removeLayer(circle);
+                marker = null;
+                circle = null;
+                document.getElementById("radiusInput").value = 100;
+                map.setView([10.7502, 121.9324], 15);
             }
         });
 }
@@ -252,8 +221,17 @@ function disableGeofenceEdit() {
 }
 
 function saveGeofence() {
+    console.log("saveGeofence: Function called");
     const radius = parseInt(document.getElementById("radiusInput").value);
+    console.log("saveGeofence: Radius from input:", radius);
+
     if (!marker || !auth.currentUser) {
+        console.error("saveGeofence: Missing marker or user", {
+            marker: !!marker,
+            user: !!auth.currentUser,
+            markerDetails: marker ? marker.getLatLng() : null,
+            userEmail: auth.currentUser ? auth.currentUser.email : null
+        });
         document.getElementById("status").textContent =
             "⚠️ Select a location on the map first.";
         console.warn("saveGeofence: No marker or user.", {
@@ -262,25 +240,46 @@ function saveGeofence() {
         });
         return;
     }
+
+    if (!selectedRoomCode) {
+        console.error("saveGeofence: No room selected", { selectedRoomCode });
+        document.getElementById("status").textContent =
+            "⚠️ No room selected.";
+        return;
+    }
+
     const { lat, lng } = marker.getLatLng();
     const email = auth.currentUser.email;
+    console.log("saveGeofence: Extracted values:", {
+        lat,
+        lng,
+        radius,
+        joinCode: selectedRoomCode,
+        email,
+    });
 
     console.log("saveGeofence: Attempting to save geofence with values:", {
         lat,
         lng,
         radius,
+        joinCode: selectedRoomCode,
         email,
     });
 
+    const geofenceData = {
+        center: { lat, lng },
+        radius: radius,
+        joinCode: selectedRoomCode,
+        supervisorEmail: email,
+        updatedAt: new Date(),
+    };
+    console.log("saveGeofence: Data to save:", geofenceData);
+
     db.collection("geofences")
-        .doc(email)
-        .set({
-            center: { lat, lng },
-            radius: radius,
-            supervisorEmail: email,
-            updatedAt: new Date(),
-        })
+        .doc(selectedRoomCode)
+        .set(geofenceData)
         .then(() => {
+            console.log("saveGeofence: Firestore set successful");
             document.getElementById(
                 "status"
             ).textContent = `✅ Geofence saved at (${lat.toFixed(
@@ -290,6 +289,7 @@ function saveGeofence() {
             disableGeofenceEdit(); // Disable editing after saving
         })
         .catch((error) => {
+            console.error("saveGeofence: Firestore set failed", error);
             document.getElementById("status").textContent =
                 "❌ Failed to save geofence.";
             console.error("saveGeofence: Error saving geofence:", error);
@@ -300,332 +300,74 @@ function saveGeofence() {
 }
 
 // Intern Management Functions
-function loadInterns() {
-    console.log("loadInterns called");
-    const email = auth.currentUser.email;
-    const internList = document.getElementById("internList");
+async function loadInterns() {
+  console.log("loadInterns called");
+
+  const email = auth.currentUser?.email;
+  const internList = document.getElementById("internList");
+  internList.innerHTML = "<p class='text-sm text-gray-500'>Loading...</p>";
+
+  if (!email) {
+    internList.innerHTML = "<p class='text-sm text-red-600'>No supervisor logged in.</p>";
+    return;
+  }
+
+  try {
+    // Fetch interns linked to this supervisor
+    const snapshot = await db.collection("interns")
+      .where("supervisorEmail", "==", email)
+      .get();
+
+    internList.innerHTML = "";
+    if (snapshot.empty) {
+      internList.innerHTML = "<p class='text-sm text-gray-500'>No interns assigned.</p>";
+      return;
+    }
+
+    for (const docSnap of snapshot.docs) {
+      const intern = docSnap.data();
+      const internId = docSnap.id;
+
+      try {
+        const presenceDoc = await db.collection("interns_inside").doc(internId).get();
+
+        let timedInStatus = "❌ Not Timed In";
+        let timedInClass = "text-red-600";
+
+        if (presenceDoc.exists) {
+          const data = presenceDoc.data();
+          if (data.timedIn) {
+            timedInStatus = "✅ Timed In";
+            timedInClass = "text-green-600";
+          }
+        }
+
+        internList.innerHTML += `
+          <li class="bg-gray-50 rounded-lg shadow p-4 flex justify-between items-center">
+            <div>
+              <h3 class="text-lg font-semibold">${intern.name || "Unnamed Intern"}</h3>
+              <p class="text-sm text-gray-500">${intern.email || ""}</p>
+              <p class="text-sm ${timedInClass} font-medium mt-1">${timedInStatus}</p>
+            </div>
+          </li>
+        `;
+
+      } catch (presenceErr) {
+        console.error("Error loading intern presence:", presenceErr);
+        internList.innerHTML += `
+          <li class="text-red-600">❌ Error loading presence for ${intern.name || internId}</li>`;
+      }
+    }
+
+  } catch (err) {
+    console.error("Error loading interns:", err);
     internList.innerHTML =
-        "<p class='text-sm text-gray-500'>Loading...</p>";
-
-    // Fetch and display current schedule
-    db.collection("schedules")
-        .doc("mainSchedule")
-        .get()
-        .then((docSnap) => {
-            const scheduleDetails = document.getElementById("scheduleDetails");
-            if (docSnap.exists) {
-                const schedule = docSnap.data();
-                const {
-                    startDate,
-                    endDate,
-                    allowedDays = [],
-                    dailyTimes = {},
-                    totalHours = 0,
-                } = schedule;
-
-                let dayLines = [];
-                if (Object.keys(dailyTimes).length) {
-                    DAY_KEYS.forEach((k) => {
-                        if (allowedDays.includes(k) && dailyTimes[k]) {
-                            const { start, end } = dailyTimes[k];
-                            dayLines.push(`${DAY_LABELS[k]}: ${start} - ${end}`);
-                        }
-                    });
-                } else {
-                    allowedDays.forEach((k) =>
-                        dayLines.push(`${DAY_LABELS[k]}: N/A`)
-                    );
-                }
-
-                scheduleDetails.innerHTML = `
-                    <div>
-                    <strong>Date Range:</strong> ${startDate || "N/A"} - ${endDate || "N/A"}<br>
-                    <strong>Days & Times:</strong><br>
-                    <div class="mt-1 text-sm">${dayLines.length ? dayLines.join("<br>") : "N/A"}</div>
-                    <br><strong>Total Hours:</strong> ${Number(totalHours).toFixed(2)} hrs
-                    </div>
-                `;
-            } else {
-                scheduleDetails.innerHTML =
-                    "<span class='text-red-600'>No schedule set.</span>";
-            }
-        });
-
-
-    // Load interns and compute presence status against the correct day's times
-    db.collection("interns")
-        .where("supervisorEmail", "==", email)
-        .get()
-        .then((snapshot) => {
-            console.log("Intern query result size:", snapshot.size);
-            internList.innerHTML = "";
-            if (snapshot.empty) {
-                internList.innerHTML =
-                    "<p class='text-sm text-gray-500'>No interns assigned.</p>";
-                return;
-            }
-
-            snapshot.forEach((docSnap) => {
-                const intern = docSnap.data();
-                const internId = docSnap.id;
-
-                db.collection("interns_inside")
-                    .doc(internId)
-                    .get()
-                    .then((presenceDoc) => {
-                        let statusText = "";
-                        let statusClass = "text-red-600";
-                        let extraInfo = "";
-
-                        if (presenceDoc.exists) {
-                            const data = presenceDoc.data();
-                            const timeIn = data.timeIn ? data.timeIn.toDate() : null;
-                            const timeOut = data.timeOut ? data.timeOut.toDate() : null;
-                            const timedIn = data.timedIn || false;
-
-                            db.collection("schedules")
-                                .doc(email)
-                                .get()
-                                .then((mainSchedule) => {
-                                    if (mainSchedule.exists && timeIn && timeOut) {
-                                        const s = mainSchedule.data();
-                                        const allowed = s.allowedDays || [];
-                                        const dt = s.dayTimes || {};
-                                        const wdShort = timeIn.toLocaleDateString("en-US", {
-                                            weekday: "short",
-                                        }); // "Mon"
-                                        const key = shortToKey(wdShort); // "mon"
-
-                                        // Decide which times apply
-                                        let st = dt[key]?.start || s.startTime;
-                                        let et = dt[key]?.end || s.endTime;
-
-                                        if (allowed.length && !allowed.includes(key)) {
-                                            // Not a scheduled day → treat as outside schedule
-                                            st = null;
-                                            et = null;
-                                        }
-
-                                        if (st && et) {
-                                            const [sh, sm] = st.split(":").map(Number);
-                                            const [eh, em] = et.split(":").map(Number);
-
-                                            const schedStart = new Date(timeIn);
-                                            schedStart.setHours(sh || 0, sm || 0, 0, 0);
-
-                                            const schedEnd = new Date(timeIn);
-                                            schedEnd.setHours(eh || 0, em || 0, 0, 0);
-                                            if (schedEnd < schedStart)
-                                                schedEnd.setDate(schedEnd.getDate() + 1); // overnight safeguard
-
-                                            if (timeOut < schedEnd) {
-                                                const diffMin = Math.round(
-                                                    (schedEnd - timeOut) / 60000
-                                                );
-                                                statusText = `⏰ Undertime (${diffMin} min left)`;
-                                                statusClass = "text-yellow-600";
-                                                extraInfo = `<br><span class='text-xs text-gray-500'>Time Out: ${timeOut.toLocaleTimeString()}</span>`;
-                                            } else if (timeOut > schedEnd) {
-                                                const diffMin = Math.round(
-                                                    (timeOut - schedEnd) / 60000
-                                                );
-                                                statusText = `⏱️ Overtime (${diffMin} min extra)`;
-                                                statusClass = "text-green-600";
-                                                extraInfo = `<br><span class='text-xs text-gray-500'>Time Out: ${timeOut.toLocaleTimeString()}</span>`;
-                                            } else {
-                                                statusText = `✔️ On time`;
-                                                statusClass = "text-green-600";
-                                            }
-                                        } else {
-                                            statusText = `ℹ️ No schedule for ${DAY_LABELS[key]}`;
-                                            statusClass = "text-gray-600";
-                                        }
-                                    }
-
-                                    const timedInStatus = timedIn
-                                        ? "✅ Timed In"
-                                        : "❌ Not Timed In";
-                                    const timedInClass = timedIn
-                                        ? "text-green-600"
-                                        : "text-red-600";
-
-                                    internList.innerHTML += `
-                  <li class="bg-gray-50 rounded-lg shadow p-4 flex justify-between items-center">
-                    <div>
-                      <h3 class="text-lg font-semibold">${
-                                        intern.name || "Unnamed Intern"
-                                    }</h3>
-                      <p class="text-sm text-gray-500">${
-                                        intern.email || ""
-                                    }</p>
-                      <p class="text-sm ${statusClass} font-medium mt-1">${statusText}</p>
-                      <p class="text-sm ${timedInClass} font-medium mt-1">${timedInStatus}</p>
-                      ${extraInfo}
-                    </div>
-                  </li>
-                `;
-                                })
-                                .catch((err) => {
-                                    console.error("Error loading schedule:", err);
-                                    internList.innerHTML += `<li class="text-red-600">❌ Error loading schedule</li>`;
-                                });
-                        } else {
-                            internList.innerHTML += `
-                <li class="bg-gray-50 rounded-lg shadow p-4 flex justify-between items-center">
-                  <div>
-                    <h3 class="text-lg font-semibold">${
-                                        intern.name || "Unnamed Intern"
-                                    }</h3>
-                    <p class="text-sm text-gray-500">${intern.email || ""}</p>
-                    <p class="text-sm text-red-600 font-medium mt-1">❌ Not Timed In</p>
-                  </div>
-                </li>
-              `;
-                        }
-                    })
-                    .catch((err) => {
-                        console.error("Error loading intern presence:", err);
-                        internList.innerHTML += `<li class="text-red-600">❌ Error loading intern presence</li>`;
-                    });
-            });
-        })
-        .catch((err) => {
-            console.error("Error loading interns:", err);
-            internList.innerHTML =
-                "<p class='text-sm text-red-600'>❌ Error loading interns.</p>";
-        });
-    
-    refreshScheduleDetails();
+      "<p class='text-sm text-red-600'>❌ Error loading interns.</p>";
+  }
 }
 
-function enableScheduleEdit() {
-    document.getElementById("scheduleFormFields").style.display = "";
-    document.getElementById("saveScheduleBtn").style.display = "";
-    document.getElementById("editScheduleBtn").style.display = "none";
-}
 
-function toggleScheduleType(type) {
-    globalType = type;
-    document
-        .getElementById("unifiedTimeFields")
-        .classList.toggle("hidden", type !== "unified");
-    document
-        .getElementById("customScheduleFields")
-        .classList.toggle("hidden", type !== "custom");
-    if (type === "custom") toggleCustomDays();
-}
 
-function toggleCustomDays() {
-    if (globalType === "custom") {
-        const checked = new Set(
-            Array.from(document.querySelectorAll(".dayCheckbox:checked")).map(
-                (cb) => cb.value
-            )
-        );
-        ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].forEach((label) => {
-            const el = document.getElementById(label);
-            if (el)
-                el.classList.toggle("hidden", !checked.has(label.toLowerCase()));
-        });
-    }
-}
-
-async function saveSchedule() {
-    try {
-        const startDate = document.getElementById("startDateInput").value;
-        const totalHours = parseFloat(document.getElementById("totalHoursInput").value);
-        const timeMode = document.querySelector('input[name="timeMode"]:checked')?.value;
-        const hoursPerDay = parseFloat(document.getElementById("hoursPerDay").value);
-
-        const allowedDays = Array.from(document.querySelectorAll(".allowedDay:checked")).map(d => d.value);
-        if (allowedDays.length === 0) throw new Error("Select at least one allowed day.");
-
-        let dailyTimes = []; // <-- Change from object to array
-
-        // Temporary structure for day->start/end
-        let timeMap = {};
-
-        if (timeMode === "hoursPerDay") {
-            const startTime = document.getElementById("startTimeHPD").value;
-            if (!startTime || isNaN(hoursPerDay)) throw new Error("Start time and hours per day are required.");
-
-            allowedDays.forEach(day => {
-                let [sh, sm] = startTime.split(":").map(Number);
-                let startMinutes = sh * 60 + sm;
-                let endMinutes = startMinutes + hoursPerDay * 60;
-                endMinutes %= 1440;
-
-                let endHour = Math.floor(endMinutes / 60);
-                let endMin = endMinutes % 60;
-                let endTime = `${String(endHour).padStart(2, "0")}:${String(endMin).padStart(2, "0")}`;
-
-                timeMap[day] = { start: startTime, end: endTime };
-            });
-
-        } else {
-            const startTime = document.getElementById("startTimeET").value;
-            const endTime = document.getElementById("endTimeET").value;
-            if (!startTime || !endTime) throw new Error("Start and end times are required.");
-
-            allowedDays.forEach(day => {
-                timeMap[day] = { start: startTime, end: endTime };
-            });
-        }
-
-        // Hours per day (first day as reference)
-        const firstDay = allowedDays[0];
-        const [sh, sm] = timeMap[firstDay].start.split(":").map(Number);
-        const [eh, em] = timeMap[firstDay].end.split(":").map(Number);
-        let startTotal = sh * 60 + sm;
-        let endTotal = eh * 60 + em;
-        let diffMinutes = endTotal - startTotal;
-        if (diffMinutes <= 0) diffMinutes += 1440;
-        const hoursPerDayValue = diffMinutes / 60;
-
-        if (hoursPerDayValue <= 0) throw new Error("Daily hours must be greater than zero.");
-
-        // Compute end date & populate dailyTimes array
-        const daysNeeded = Math.ceil(totalHours / hoursPerDayValue);
-        let currentDate = new Date(startDate);
-        let counted = 0;
-
-        while (counted < daysNeeded) {
-            const dayName = currentDate.toLocaleDateString("en-US", { weekday: "short" }).toLowerCase();
-            if (allowedDays.includes(dayName)) {
-                let dateStr = `${currentDate.getMonth()+1}-${currentDate.getDate()}-${currentDate.getFullYear()}`;
-                dailyTimes.push({
-                    date: dateStr,
-                    day: dayName,
-                    start: timeMap[dayName].start,
-                    end: timeMap[dayName].end
-                });
-                counted++;
-            }
-            if (counted < daysNeeded) currentDate.setDate(currentDate.getDate() + 1);
-        }
-
-        const endDate = currentDate.toISOString().split("T")[0];
-
-        const supervisorEmail = auth.currentUser?.email;
-        if (!supervisorEmail) throw new Error("User not authenticated.");
-
-        await db.collection("schedules").doc("mainSchedule").set({
-            startDate,
-            endDate,
-            hpd: hoursPerDay,
-            allowedDays,
-            dailyTimes, // <-- Now an array with date, day, start, end
-            totalHours,
-            supervisorEmail,
-            updatedAt: new Date()
-        });
-
-        alert("Schedule saved successfully!");
-        refreshScheduleDetails();
-    } catch (err) {
-        alert("Error: " + err.message);
-    }
-}
 
 
 function supervisorLogout() {
@@ -644,9 +386,9 @@ function proceedToDashboard() {
     document.getElementById("authModal").classList.add("hidden");
     document.getElementById("dashboard").classList.remove("hidden");
     document.getElementById("confirmModal").style.display = "none";
-    initMap(); // <-- Add this line
-    loadGeofence();
+    initMap();
     loadInterns();
+    fetchRooms();
 }
 
 function logoutAndReset() {
@@ -669,226 +411,7 @@ function logoutAndReset() {
         });
 }
 
-// ======= Modal open/close =======
-async function openEditScheduleModal() {
-    // Pre-select Mon–Fri by default for sanity
-    document
-        .getElementById("scheduleInputModal")
-        .classList.remove("hidden");
-    document.getElementById("scheduleInputModal").classList.add("flex");
-}
 
-function closeScheduleInputModal() {
-    document.getElementById("scheduleInputModal").classList.add("hidden");
-    document.getElementById("scheduleInputModal").classList.remove("flex");
-    clearInputErrors();
-}
-
-function backToInput() {
-    closeScheduleReviewModal();
-    openEditScheduleModal();
-}
-
-function closeScheduleReviewModal() {
-    document.getElementById("scheduleReviewModal").classList.add("hidden");
-    document.getElementById("scheduleReviewModal").classList.remove("flex");
-}
-
-// ======= Helpers =======
-function clearInputErrors() {
-    [
-        "totalHoursError",
-        "startDateError",
-        "hpdError",
-        "etError",
-        "daysError",
-    ].forEach((id) => {
-        const el = document.getElementById(id);
-        if (el) {
-            el.textContent = "";
-            el.classList.add("hidden");
-        }
-    });
-}
-
-function parseHHMM(str) {
-    if (!str || !/^\d{2}:\d{2}$/.test(str)) return null;
-    const [h, m] = str.split(":").map(Number);
-    if (isNaN(h) || isNaN(m)) return null;
-    return { h, m };
-}
-
-function hoursBetween(startStr, endStr) {
-    const s = parseHHMM(startStr),
-        e = parseHHMM(endStr);
-    if (!s || !e) return null;
-    let diff = e.h + e.m / 60 - (s.h + s.m / 60);
-    if (diff < 0) diff += 24; // naive overnight support
-    return diff;
-}
-
-function addHoursToTime(startStr, hours) {
-    const s = parseHHMM(startStr);
-    if (!s) return null;
-    const total = s.h + s.m / 60 + hours;
-    const wrapped = ((total % 24) + 24) % 24;
-    const hh = Math.floor(wrapped);
-    const mm = Math.round((wrapped - hh) * 60);
-    return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
-}
-
-// ======= Core compute flow =======
-function computeAndReviewSchedule() {
-    clearInputErrors();
-
-    // Collect inputs
-    const totalHours = Number(
-        document.getElementById("totalHoursInput").value
-    );
-    const startDateStr = document.getElementById("startDateInput").value;
-    const mode =
-        document.querySelector('input[name="timeMode"]:checked')?.value ||
-        "hoursPerDay";
-
-    const allowed = Array.from(
-        document.querySelectorAll("#scheduleInputModal .allowedDay:checked")
-    ).map((cb) => cb.value);
-
-    // Validate base fields
-    let hasErr = false;
-    if (!(totalHours > 0)) {
-        showErr("totalHoursError", "Enter a valid total hours (> 0).");
-        hasErr = true;
-    }
-    if (!startDateStr) {
-        showErr("startDateError", "Select a start date.");
-        hasErr = true;
-    }
-    if (!allowed.length) {
-        showErr("daysError", "Select at least one allowed day.");
-        hasErr = true;
-    }
-
-    let dailyStart = null,
-        dailyHours = null,
-        dailyEnd = null;
-
-    if (mode === "hoursPerDay") {
-        dailyStart = document.getElementById("startTimeHPD").value;
-        dailyHours = Number(document.getElementById("hoursPerDay").value);
-        if (!dailyStart || !(dailyHours > 0)) {
-            showErr(
-                "hpdError",
-                "Provide Start Time and positive Hours per Day."
-            );
-            hasErr = true;
-        } else {
-            dailyEnd = addHoursToTime(dailyStart, dailyHours);
-        }
-    } else {
-        const st = document.getElementById("startTimeET").value;
-        const et = document.getElementById("endTimeET").value;
-        const diff = hoursBetween(st, et);
-        if (!st || !et || diff === null || !(diff > 0)) {
-            showErr(
-                "etError",
-                "Provide valid Start and End times (End must be after Start; overnight allowed)."
-            );
-            hasErr = true;
-        } else {
-            dailyStart = st;
-            dailyHours = diff;
-            dailyEnd = et;
-        }
-    }
-
-    if (hasErr) return;
-
-    // Compute end date by distributing totalHours across allowed weekdays
-    const startDate = new Date(`${startDateStr}T00:00:00`);
-    if (isNaN(startDate)) {
-        showErr("startDateError", "Invalid date.");
-        return;
-    }
-
-    let remaining = totalHours;
-    let cursor = new Date(startDate);
-    let lastDayEndTime = dailyEnd;
-
-    // Precompute allowed JS weekday indices
-    const allowedWD = new Set(allowed.map((k) => KEY_TO_JSWD[k]));
-
-    // If the start day is allowed, we count that day first
-    // Loop with sane guard (e.g., 5 years) to avoid infinite loop on pathological inputs
-    const GUARD_DAYS = 366 * 5;
-    let steps = 0;
-
-    while (remaining > 0 && steps < GUARD_DAYS) {
-        const wd = cursor.getDay(); // 0..6
-        if (allowedWD.has(wd)) {
-            const todaysHours = Math.min(dailyHours, remaining);
-            remaining -= todaysHours;
-
-            // If this is the final (possibly partial) day, adjust lastDayEndTime
-            if (remaining <= 0) {
-                lastDayEndTime = addHoursToTime(dailyStart, todaysHours);
-                break;
-            }
-        }
-        // move to next day 00:00
-        cursor.setDate(cursor.getDate() + 1);
-        steps++;
-    }
-
-    const lastDayTimeFormatted = `${formatTimeToAMPM(dailyStart)} - ${formatTimeToAMPM(lastDayEndTime)}`;
-    document.getElementById("revLastDayTime").textContent = lastDayTimeFormatted;
-
-    const endDate = new Date(
-        cursor.getFullYear(),
-        cursor.getMonth(),
-        cursor.getDate()
-    ); // normalize
-    const endDateStr = endDate.toISOString().slice(0, 10);
-
-    // Populate Review modal
-    document.getElementById("revStartDate").textContent = startDateStr;
-    document.getElementById("revEndDate").textContent = endDateStr;
-    document.getElementById("revDays").textContent = allowed
-        .map((k) => DAY_LABELS[k])
-        .join(", ");
-    document.getElementById(
-        "revDailyTime"
-    ).textContent = `${dailyStart} - ${lastDayEndTime}`;
-    document.getElementById("revTotalHours").textContent =
-        String(totalHours);
-
-    // Note if final day ends earlier than base dailyEnd (partial day)
-    const partialNote =
-        (mode === "hoursPerDay" &&
-            lastDayEndTime !== addHoursToTime(dailyStart, dailyHours)) ||
-        (mode === "endTime" &&
-            hoursBetween(dailyStart, lastDayEndTime) !== dailyHours);
-    const noteEl = document.getElementById("revLastDayNote");
-    if (partialNote) {
-        noteEl.textContent = `Note: Final day ends earlier to exactly meet ${totalHours} hours.`;
-    } else {
-        noteEl.textContent = "";
-    }
-
-    // Show Review modal
-    closeScheduleInputModal();
-    const rev = document.getElementById("scheduleReviewModal");
-    rev.classList.remove("hidden");
-    rev.classList.add("flex");
-}
-
-function showErr(id, message) {
-    const el = document.getElementById(id);
-    if (el) {
-        el.textContent = message;
-        el.classList.remove("hidden");
-    }
-}
 
 // ======= Missing Functions =======
 function logoutAllInterns() {
@@ -959,80 +482,167 @@ function formatTimeToAMPM(timeStr) {
     return `${hour12}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
-function refreshScheduleDetails() {
-    const scheduleDetails = document.getElementById("scheduleDetails");
-    scheduleDetails.innerHTML = "<p class='text-sm text-gray-500'>Loading...</p>";
-
-    db.collection("schedules")
-        .doc("mainSchedule")
-        .get()
-        .then((doc) => {
-            if (doc.exists) {
-                const schedule = doc.data();
-                const { startDate, endDate, dailyTimes = [], totalHours = 0 } = schedule || {};
-            
-                function parseDate(dateStr) {
-                    // Handles "9-9-2025" or "10-2-2025" format
-                    const [month, day, year] = dateStr.split('-').map(Number);
-                    return new Date(year, month - 1, day);
-                }
-                
-                function formatDay(day) {
-                    const daysMap = {
-                        mon: "Monday",
-                        tue: "Tuesday",
-                        wed: "Wednesday",
-                        thu: "Thursday",
-                        fri: "Friday",
-                        sat: "Saturday",
-                        sun: "Sunday"
-                    };
-                    return daysMap[day?.toLowerCase()] || day || "N/A";
-                }
 
 
-                const sortedTimes = Array.isArray(dailyTimes)
-                    ? dailyTimes.sort((a, b) => parseDate(a.date) - parseDate(b.date))
-                    : []
-                ;
 
-                scheduleDetails.innerHTML = `
-                    <div>
-                        <strong>Schedule Details:</strong><br>
-                        <table class="table-auto border border-gray-300 mt-2 w-full text-sm">
-                            <thead>
-                                <tr class="bg-gray-100">
-                                    <th class="border px-2 py-1">Date</th>
-                                    <th class="border px-2 py-1">Day</th>
-                                    <th class="border px-2 py-1">Start</th>
-                                    <th class="border px-2 py-1">End</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${sortedTimes.map(entry => `
-                                    <tr>
-                                        <td class="border px-2 py-1">${entry.date || "N/A"}</td>
-                                        <td class="border px-2 py-1">${formatDay(entry.day)}</td>
-                                        <td class="border px-2 py-1">${entry.start || "N/A"}</td>
-                                        <td class="border px-2 py-1">${entry.end || "N/A"}</td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                        <br><strong>Date Range:</strong> ${startDate || "N/A"} to ${endDate || "N/A"}<br>
-                        <strong>Total Hours:</strong> ${Number(totalHours).toFixed(2)} hrs
-                    </div>
-                `;
-
-            } else {
-                scheduleDetails.innerHTML = "<span class='text-red-600'>No schedule set.</span>";
-            }
-        })
-        .catch((err) => {
-            console.error("Error refreshing schedule details:", err);
-            scheduleDetails.innerHTML = "<p class='text-sm text-red-600'>Error loading schedule details.</p>";
-        })
-    ;
+// Generate a unique 8-character join code
+function generateJoinCode() {
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const numbers = "0123456789";
+  let code = "";
+  for (let i = 0; i < 4; i++) code += letters.charAt(Math.floor(Math.random() * letters.length));
+  for (let i = 0; i < 4; i++) code += numbers.charAt(Math.floor(Math.random() * numbers.length));
+  return code;
 }
+
+// Create Room Function
+async function createRoom() {
+  const roomName = document.getElementById("roomName").value.trim();
+  const statusEl = document.getElementById("roomStatus");
+
+  if (!roomName) {
+    statusEl.textContent = "❌ Room name is required.";
+    statusEl.classList.remove("text-green-600");
+    statusEl.classList.add("text-red-600");
+    return;
+  }
+
+  const supervisorEmail = auth.currentUser?.email;
+  if (!supervisorEmail) {
+    statusEl.textContent = "❌ User not authenticated.";
+    statusEl.classList.remove("text-green-600");
+    statusEl.classList.add("text-red-600");
+    return;
+  }
+
+  try {
+    // Generate unique join code
+    const joinCode = generateJoinCode();
+
+    // Save room details in Firestore
+    const roomRef = db.collection("rooms").doc();
+    await roomRef.set({
+      roomName,
+      joinCode,
+      supervisorEmail,
+      createdAt: new Date(),
+    });
+
+    statusEl.textContent = `✅ Room created! Join Code: ${joinCode}`;
+    statusEl.classList.remove("text-red-600");
+    statusEl.classList.add("text-green-600");
+
+    // Refresh the rooms list to show the new room
+    fetchRooms();
+
+    // Clear input
+    document.getElementById("roomName").value = "";
+  } catch (err) {
+    console.error("Error creating room:", err);
+    statusEl.textContent = "❌ Failed to create room. Try again. " + err;
+    statusEl.classList.remove("text-green-600");
+    statusEl.classList.add("text-red-600");
+  }
+}
+
+
+async function fetchRooms() {
+  const roomList = document.getElementById("roomList");
+  roomList.innerHTML = "<p class='text-sm text-gray-500'>Loading rooms...</p>";
+
+  const supervisorEmail = auth.currentUser?.email;
+  if (!supervisorEmail) {
+    roomList.innerHTML = "<p class='text-sm text-red-600'>Not logged in.</p>";
+    return;
+  }
+
+  try {
+    const snapshot = await db.collection("rooms")
+    .where("supervisorEmail", "==", supervisorEmail)
+    .get();
+
+    let html = "";
+    snapshot.forEach(doc => {
+      const { roomName, joinCode, createdAt } = doc.data();
+      const date = createdAt?.toDate().toLocaleString() || "Unknown";
+        html += `
+        <li class="border rounded p-3 bg-gray-50 flex justify-between items-center cursor-pointer hover:bg-gray-100"
+            onclick='showRoomDetails(${JSON.stringify(doc.data()).replace(/'/g, "\\'")})'>
+            <div>
+            <h3 class="text-lg font-semibold">${roomName}</h3>
+            <p class="text-sm text-gray-500">Join Code: <strong>${joinCode}</strong></p>
+            <p class="text-xs text-gray-400">Created: ${date}</p>
+            </div>
+            <button onclick="event.stopPropagation(); copyJoinCode('${joinCode}')" 
+            class="text-blue-600 text-sm hover:underline">Copy Code</button>
+        </li>
+        `;
+    });
+    roomList.innerHTML = html;
+  } catch (err) {
+    alert("Error fetching rooms: " + err);
+    roomList.innerHTML = "<p class='text-sm text-red-600'>Failed to load rooms.</p>";
+  }
+}
+
+function copyJoinCode(code) {
+  navigator.clipboard.writeText(code)
+    .then(() => alert(`Join code ${code} copied to clipboard!`))
+    .catch(() => alert("Failed to copy code."));
+}
+
+
+function showRoomDetails(room) {
+  document.getElementById("roomDetailsTitle").textContent = room.roomName;
+  document.getElementById("roomJoinCode").textContent = `Join Code: ${room.joinCode}`;
+
+  selectedRoomCode = room.joinCode;
+
+  // Fetch and render interns dynamically
+  fetchRoomInterns(selectedRoomCode);
+  loadInterns();
+
+  // Load geofence for this room
+  loadGeofence(selectedRoomCode);
+
+  // Hide room list and show details
+  document.getElementById("roomList").style.display = "none";
+  document.getElementById("roomDetailsContainer").classList.remove("hidden");
+}
+
+function backToRooms() {
+  // Hide details and show room list
+  document.getElementById("roomDetailsContainer").classList.add("hidden");
+  document.getElementById("roomList").style.display = "block";
+}
+
+async function fetchRoomInterns(roomCode) {
+    const internList = document.getElementById("roomInternList");
+    internList.innerHTML = "<li class='text-gray-500'>Loading interns...</li>";
+
+    try {
+        const roomDoc = await db.collection("rooms")
+            .where("joinCode", "==", roomCode)
+            .limit(1)
+            .get();
+
+        if (roomDoc.empty) {
+            internList.innerHTML = "<li>No room data found.</li>";
+            return;
+        }
+
+        const interns = roomDoc.docs[0].data().interns || [];
+        if (interns.length === 0) {
+            internList.innerHTML = "<li>No interns joined yet.</li>";
+            return;
+        }
+
+        internList.innerHTML = interns.map(email => `<li>${email}</li>`).join("");
+    } catch (err) {
+        internList.innerHTML = `<li class='text-red-500'>Error: ${err.message}</li>`;
+    }
+}
+
+
 
 

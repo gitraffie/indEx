@@ -1,0 +1,82 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Supervisor data is readable by anyone
+    match /supervisors/{supervisorId} {
+      allow read: if true;
+    }
+
+    // Intern can read/write only their own document, supervisors can read interns assigned to them, coordinators can read interns
+    match /interns/{internId} {
+      allow read, write: if request.auth != null && (request.auth.uid == internId || resource.data.supervisorEmail == request.auth.token.email || exists(/databases/$(database)/documents/coordinators/$(request.auth.uid)));
+    }
+
+    // Geofence: readable by logged-in users, writable by supervisors
+    match /geofences/{geoId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.resource.data.supervisorEmail == request.auth.token.email;
+    }
+
+    // Schedules: readable by authenticated users, writable by supervisors or coordinators
+    match /schedules/{scheduleId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && (request.resource.data.supervisorEmail == request.auth.token.email || request.resource.data.coordinatorEmail == request.auth.token.email);
+    }
+
+    // Interns inside: read/write by authenticated users (interns and supervisors), coordinators can read
+    match /interns_inside/{internId} {
+      allow read, write: if request.auth != null && (request.auth.uid == internId || exists(/databases/$(database)/documents/coordinators/$(request.auth.uid)));
+    }
+
+    // Journal entries - nested collection
+    match /journals/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      match /entries/{entryId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // Coordinators (for registration validation)
+    match /coordinators/{docId} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == docId;
+    }
+    
+    // Tasks: readable by all, creatable by authenticated users
+    match /tasks/{taskId} {
+      allow create: if request.auth != null;
+      allow read: if true;
+      allow update, delete: if false; // Only admins should modify tasks
+    }
+    
+    // Rooms: readable by all, creatable by authenticated users
+    match /rooms/{roomId} {
+      allow create: if request.auth != null;
+      allow read: if true;
+      allow update: if request.auth != null &&
+                    (request.resource.data.supervisorEmail == request.auth.token.email ||
+                     request.resource.data.coordinatorEmail == request.auth.token.email ||
+                     resource.data.interns.hasAny([request.auth.token.email]) ||
+                     request.resource.data.interns.hasAny([request.auth.token.email]));
+    }
+
+    // Interns schedules: read/write only by the matching intern
+    match /interns_schedules/{internId} {
+      allow read, write: if request.auth != null && request.auth.uid == internId;
+    }
+
+    // Intern reports: create/read by the matching intern based on email
+    match /intern_reports/{reportId} {
+      allow create: if request.auth != null && request.auth.token.email == request.resource.data.internEmail;
+      allow read: if request.auth != null && request.auth.token.email == resource.data.internEmail;
+      allow update, delete: if false; // Reports should not be modified after creation
+    }
+
+    // Intern data: read/write by the matching intern or coordinators
+    match /intern_data/{docId} {
+      allow read, write: if request.auth != null && (request.auth.token.email == resource.data.intern_email || exists(/databases/$(database)/documents/coordinators/$(request.auth.uid)));
+    }
+  }
+}

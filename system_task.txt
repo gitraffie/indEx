@@ -1,0 +1,153 @@
+# Internship Management System - Detailed Task Description
+
+## Project Overview
+This is a comprehensive web-based internship management system designed to facilitate the coordination between supervisors, coordinators, and interns. The system enables geofencing-based time tracking, room management, scheduling, and progress monitoring for internship programs.
+
+## System Architecture
+- **Frontend**: HTML, CSS (Tailwind CSS), JavaScript
+- **Backend**: Firebase (Authentication, Firestore Database, Storage)
+- **Maps & Geofencing**: Leaflet.js for interactive maps and geofence visualization
+- **Additional Libraries**: Font Awesome for icons, SweetAlert2 for notifications, Flowbite for UI components
+
+## User Roles and Functionalities
+
+### 1. Supervisor Role
+**Authentication**: Email/password with verification
+**Key Features**:
+- Register/login with organization details
+- Create rooms with unique join codes for interns
+- Set geofences on interactive maps for each room
+- View list of interns assigned to them
+- Monitor interns' timed-in status in real-time
+- Log out all interns or themselves
+- Manage room-specific geofences and boundaries
+
+### 2. Coordinator Role
+**Authentication**: Email/password with verification
+**Key Features**:
+- Register/login with organization details
+- Create rooms with unique join codes
+- Add detailed schedules for rooms (start/end dates, working hours, allowed days)
+- Manage interns within their rooms
+- Edit individual intern schedules
+- View intern progress and attendance
+- Log out all interns or themselves
+- Generate and manage coordinator codes for intern registration
+
+### 3. Intern Role
+**Authentication**: Email/password with verification
+**Key Features**:
+- Register with supervisor email and coordinator code
+- Join rooms using join codes
+- Connect to supervisor zones (geofenced areas)
+- Time in/out with geofence validation
+- View personal progress tracking (hours completed vs total)
+- Access coordinator-assigned tasks
+- View supervisor information and geofence details
+- Navigate between dashboard, time tracking, tasks, and reports sections
+
+## Core Features
+
+### Geofencing System
+- Interactive map interface using Leaflet.js
+- GPS-based location validation for time-in/out
+- Configurable geofence radius (default 100 meters)
+- Real-time location checking with user permission
+- Visual geofence display on maps
+
+### Room Management
+- Unique join codes for room access
+- Room-based organization of interns and schedules
+- Separate handling for supervisor rooms (geofenced) vs coordinator rooms (scheduled)
+
+### Scheduling System
+- Flexible schedule creation (hours per day or start/end times)
+- Support for allowed working days
+- Automatic calculation of internship end dates
+- Daily time breakdowns with pagination
+- Individual intern schedule overrides
+
+### Time Tracking
+- GPS-validated time-in/out within geofences
+- Automatic calculation of hours worked
+- Support for overtime/undertime detection
+- Real-time status updates (inside/outside)
+- Progress tracking with circular progress indicators
+
+### Progress Monitoring
+- Visual progress bars for internship completion
+- Hours remaining calculations
+- Daily time schedule viewing
+- Coordinator task assignments
+- Supervisor zone connectivity status
+
+## Database Structure (Firestore Collections)
+
+### Users Collections:
+- `supervisors`: Supervisor profiles with email, name, organization, geofence data
+- `coordinators`: Coordinator profiles with email, name, organization, unique codes
+- `interns`: Intern profiles with email, name, school, supervisor/coordinator links
+
+### Operational Collections:
+- `rooms`: Room definitions with join codes, creator info, intern lists
+- `geofences`: Geofence data with center coordinates, radius, room associations
+- `schedules`: Room schedules with dates, times, allowed days, total hours
+- `interns_inside`: Real-time intern status, location, hours tracking
+- `intern_reports`: Daily attendance and time records
+- `intern_data`: Intern-specific data including schedules and geofences
+- `tasks`: Coordinator-assigned tasks for interns
+
+## Technical Implementation Details
+
+### Authentication Flow
+- Firebase Authentication with email verification
+- Role-based access control
+- Session management with confirmation modals
+- Automatic logout on authentication state changes
+
+### Map Integration
+- Leaflet.js for map rendering
+- OpenStreetMap tiles for base maps
+- Dynamic marker placement for user locations
+- Geofence circle overlays with customizable colors
+- Map resizing and invalidation handling
+
+### UI/UX Features
+- Responsive design with Tailwind CSS
+- Mobile-friendly sidebar navigation
+- Modal-based forms and confirmations
+- Loading spinners and progress indicators
+- SweetAlert2 notifications for user feedback
+- Kebab menus for additional actions
+
+### Data Validation
+- Client-side form validation
+- Date range validation (end dates after start dates)
+- Time format validation (HH:MM)
+- Geofence radius and coordinate validation
+- Email format and uniqueness checks
+
+## Security Considerations
+- Firebase security rules for data access control
+- Email verification for all user accounts
+- Role-based data filtering
+- Secure API key management
+- Location permission handling
+
+## Future Enhancements
+- Real-time notifications for time-in/out events
+- Advanced reporting and analytics
+- Mobile app development
+- Integration with external calendar systems
+- Automated reminder systems
+- Bulk operations for coordinators
+- Advanced geofencing with multiple zones per room
+
+## Development Notes
+- All code is organized in separate files for HTML, CSS, and JavaScript
+- Firebase configuration is centralized
+- Error handling with try-catch blocks and user-friendly messages
+- Code comments and documentation for maintainability
+- Modular function structure for reusability
+
+This system provides a complete solution for managing internship programs with modern web technologies, focusing on location-based time tracking and comprehensive progress monitoring.

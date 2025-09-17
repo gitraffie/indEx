@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>INDEX: Intern</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -21,11 +22,39 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/flowbite/1.4.0/flowbite.min.css"
     />
-      <style>
-      #map {
-        height: 256px;
+    <link rel="stylesheet" href="/css/main.css">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+      body {
+        font-family: 'Poppins', sans-serif;
       }
-      
+
+      #map {
+        height: 400px;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      /* Modal Animation Styles */
+      .modal-content {
+        transition: opacity 0.3s ease, transform 0.3s ease;
+        opacity: 0;
+        transform: scale(0.95);
+      }
+
+      .modal-content.fade-in {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      .modal-content.fade-out {
+        opacity: 0;
+        transform: scale(0.95);
+      }
+
       /* Circular Progress Bar Styles */
       .progress-container {
         display: flex;
@@ -33,7 +62,7 @@
         align-items: center;
         margin: 20px 0;
       }
-      
+
       .circular-progress {
         position: relative;
         width: 120px;
@@ -44,7 +73,7 @@
         align-items: center;
         justify-content: center;
       }
-      
+
       .circular-progress::before {
         content: "";
         position: absolute;
@@ -53,19 +82,110 @@
         border-radius: 50%;
         background-color: white;
       }
-      
+
       .progress-value {
         position: relative;
         font-size: 24px;
         font-weight: bold;
         color: #4174b8;
       }
-      
+
       .progress-label {
         text-align: center;
         margin-top: 10px;
         font-weight: 600;
         color: #333;
+      }
+
+      /* Kebab Menu Styles - Inline version for intern page */
+      .kebab-menu {
+        position: relative;
+        display: inline-block;
+      }
+
+      .kebab-button {
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 8px;
+        border-radius: 4px;
+        color: #6b7280;
+        transition: background-color 0.2s, color 0.2s;
+        font-size: 16px;
+        line-height: 1;
+      }
+
+      .kebab-button:hover {
+        background-color: #f3f4f6;
+        color: #374151;
+      }
+
+      .kebab-button:focus {
+        outline: none;
+        background-color: #f3f4f6;
+      }
+
+      .kebab-button i {
+        font-size: 14px;
+        color: inherit;
+      }
+
+      .popover {
+        position: absolute;
+        top: 100%;
+        right: 0;
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        z-index: 1000;
+        min-width: 140px;
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(-8px);
+        transition: all 0.2s ease;
+        margin-top: 4px;
+      }
+
+      .popover.show {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
+      }
+
+      .popover-item {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        padding: 10px 12px;
+        text-align: left;
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: #374151;
+        font-size: 14px;
+        transition: background-color 0.2s;
+        border-radius: 4px;
+        margin: 2px 4px;
+      }
+
+      .popover-item:hover {
+        background-color: #f9fafb;
+      }
+
+      .popover-item:focus {
+        outline: none;
+        background-color: #f9fafb;
+      }
+
+      .popover-item.leave-room:hover {
+        background-color: #fef2f2;
+        color: #dc2626;
+      }
+
+      .popover-item i {
+        margin-right: 8px;
+        font-size: 12px;
       }
     </style>
   </head>
@@ -89,7 +209,7 @@
     >
       <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
         <img
-          src="/images/mainlogo.webp"
+          src="../../images/mainlogo.webp"
           alt="Main Logo"
           class="h-24 mx-auto mb-4"
         />
@@ -119,11 +239,11 @@
       class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
     >
       <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
-        <img
-          src="/images/mainlogo.webp"
-          alt="Main Logo"
-          class="h-24 mx-auto mb-4"
-        />
+          <img
+              src="../../images/mainlogo.webp"
+              alt="Main Logo"
+              class="h-24 mx-auto mb-4"
+            />
         <h2
           id="modalTitle"
           class="text-xl font-bold mb-4 text-center"
@@ -210,6 +330,211 @@
       </div>
     </div>
 
+    <!-- Join Room Modal -->
+    <div
+      id="joinRoomModal"
+      style="display: none"
+      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+    >
+      <div class="bg-white p-4 rounded-lg shadow-lg w-96 modal-content fade-out">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-lg font-bold" style="color: #4174b8;">Join Room</h2>
+          <button
+            onclick="closeJoinRoomModal()"
+            class="text-gray-500 hover:text-gray-700 text-lg"
+          >
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+
+        <input
+          id="joinRoomInput"
+          type="text"
+          placeholder="Enter room code"
+          class="w-full px-3 py-2 border border-gray-300 rounded-lg mb-4 focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all"
+        />
+
+        <div class="flex justify-end gap-3">
+          <button
+            onclick="joinRoom()"
+            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-2"
+          >
+            <i class="fas fa-plus-circle text-lg"></i>
+            Join Room
+          </button>
+        </div>
+
+        <p id="joinRoomStatus" class="text-sm mt-3 text-center text-red-600"></p>
+      </div>
+    </div>
+
+    <!-- Profile Edit Modal -->
+    <div
+      id="profileModal"
+      style="display: none"
+      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+    >
+      <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-md modal-content fade-out">
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-xl font-bold" style="color: #4174b8;">Edit Profile</h2>
+          <button
+            onclick="closeProfileModal()"
+            class="text-gray-500 hover:text-gray-700 text-lg"
+          >
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+
+        <form id="profileForm" class="space-y-4">
+          <div>
+            <label for="profileName" class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+            <input
+              type="text"
+              id="profileName"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all"
+              placeholder="Enter your full name"
+              required
+            />
+          </div>
+          <div>
+            <label for="profileEmail" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input
+              type="email"
+              id="profileEmail"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all"
+              placeholder="Enter your email"
+              required
+            />
+          </div>
+          <div>
+            <label for="profileSchool" class="block text-sm font-medium text-gray-700 mb-1">School</label>
+            <input
+              type="text"
+              id="profileSchool"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all"
+              placeholder="Enter your school name"
+              required
+            />
+          </div>
+          <div>
+            <label for="profilePhone" class="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+            <input
+              type="tel"
+              id="profilePhone"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all"
+              placeholder="Enter your phone number"
+            />
+          </div>
+          <div class="flex justify-end gap-3">
+            <button
+              type="button"
+              onclick="closeProfileModal()"
+              class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-2"
+            >
+              <i class="fas fa-save"></i>
+              Save Changes
+            </button>
+          </div>
+        </form>
+
+        <p id="profileStatus" class="text-sm mt-3 text-center text-red-600"></p>
+      </div>
+    </div>
+
+    <!-- Task Details Modal -->
+    <div
+      id="taskModal"
+      style="display: none"
+      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+    >
+      <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-lg modal-content fade-out">
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-xl font-bold" style="color: #4174b8;">Task Details</h2>
+          <button
+            onclick="closeTaskModal()"
+            class="text-gray-500 hover:text-gray-700 text-lg"
+          >
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+
+        <div id="taskDetails" class="space-y-4">
+          <div>
+            <h3 class="text-lg font-semibold text-gray-800" id="taskTitle">Task Title</h3>
+            <p class="text-sm text-gray-600" id="taskDescription">Task description will appear here...</p>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <span class="text-sm font-medium text-gray-700">Priority:</span>
+              <span class="text-sm text-gray-600 ml-2" id="taskPriority">High</span>
+            </div>
+            <div>
+              <span class="text-sm font-medium text-gray-700">Due Date:</span>
+              <span class="text-sm text-gray-600 ml-2" id="taskDueDate">2024-01-15</span>
+            </div>
+            <div>
+              <span class="text-sm font-medium text-gray-700">Status:</span>
+              <span class="text-sm text-gray-600 ml-2" id="taskStatus">In Progress</span>
+            </div>
+            <div>
+              <span class="text-sm font-medium text-gray-700">Assigned By:</span>
+              <span class="text-sm text-gray-600 ml-2" id="taskAssignedBy">Coordinator</span>
+            </div>
+          </div>
+          <div>
+            <span class="text-sm font-medium text-gray-700">Progress:</span>
+            <div class="mt-2">
+              <div class="w-full bg-gray-200 rounded-full h-2">
+                <div class="bg-blue-600 h-2 rounded-full" id="taskProgressBar" style="width: 50%"></div>
+              </div>
+              <span class="text-xs text-gray-600 mt-1" id="taskProgressText">50% Complete</span>
+            </div>
+          </div>
+          <div class="flex justify-end gap-3">
+            <button
+              onclick="closeTaskModal()"
+              class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition"
+            >
+              Close
+            </button>
+            <button
+              onclick="markTaskComplete()"
+              class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center gap-2"
+            >
+              <i class="fas fa-check"></i>
+              Mark Complete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Map Modal -->
+    <div
+      id="mapModal"
+      style="display: none"
+      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+    >
+      <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-4xl h-3/4">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-xl font-bold" style="color: #4174b8;">Supervisor Geofence Map</h2>
+          <button
+            onclick="toggleMapModal()"
+            class="text-gray-500 hover:text-gray-700 text-lg"
+          >
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div id="modalMap" class="w-full h-96 rounded-xl border shadow mb-6"></div>
+      </div>
+    </div>
+
     <!-- Mobile menu button - positioned to follow sidebar -->
     <button
       id="mobile-menu-button"
@@ -225,12 +550,12 @@
       style="background-color: #4174b8"
     >
       <!-- Sidebar Header -->
-      <div class="p-4 border-b">
+      <div class="p-4" style="border-bottom: 1px solid #2c5aa0;">
         <div class="flex items-center justify-between">
           <!-- Logo Image-->
           <div class="flex justify-center">
             <img
-              src="/images/Rmainlogo.webp"
+              src="../../images/Rmainlogo.webp"
               alt="Logo"
               style="width: 200px; height: 70px; object-fit: contain"
             />
@@ -239,14 +564,14 @@
       </div>
 
       <!-- User Profile Section -->
-      <div class="p-4 border-b">
+      <div class="p-4" style="border-bottom: 1px solid #2c5aa0;">
         <div class="flex items-center">
           <div
-            class="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center"
+            class="w-10 h-10 bg-blue-300 rounded-full flex items-center justify-center"
           >
             <img
               id="userPic"
-              src="/images/default.webp"
+              src="../../images/default.webp"
               alt="User Profile"
               class="w-full h-full rounded-full object-cover"
             />
@@ -255,7 +580,7 @@
             <p id="username" class="text-sm font-medium text-white">
               Intern Name
             </p>
-            <p id="userEmail" class="text-xs text-white">Intern Email</p>
+            <p id="userEmail" class="text-xs text-gray-400">Intern Email</p>
           </div>
         </div>
       </div>
@@ -267,7 +592,7 @@
             <a
               id="active"
               href="#form1"
-              class="flex items-center text-white p-3 rounded-lg hover:bg-gray-100 hover:text-black transition"
+              class="flex items-center text-white p-3 hover:bg-gray-100 hover:text-black transition hover:rounded-lg"
               style="border: none;"
             >
               <i class="fas fa-home mr-3"></i>
@@ -278,7 +603,7 @@
             <a
               id="navItem"
               href="#form2"
-              class="flex items-center p-3 text-white rounded-lg hover:bg-gray-100 hover:text-black transition"
+              class="flex items-center p-3 text-white hover:bg-gray-100 hover:text-black transition hover:rounded-lg"
               style="border: none;"
             >
               <i class="fas fa-clock mr-3"></i>
@@ -289,7 +614,7 @@
             <a
               id="navItem"
               href="#form3"
-              class="flex items-center p-3 text-white rounded-lg hover:bg-gray-100 hover:text-black transition"
+              class="flex items-center p-3 text-white hover:bg-gray-100 hover:text-black transition hover:rounded-lg"
               style="border: none;"
             >
               <i class="fas fa-tasks mr-3"></i>
@@ -300,7 +625,7 @@
             <a
               id="navItem"
               href="#form4"
-              class="flex items-center p-3 text-white rounded-lg hover:bg-gray-100 hover:text-black transition"
+              class="flex items-center p-3 text-white hover:bg-gray-100 hover:text-black transition hover:rounded-lg"
               style="border: none;"
             >
               <i class="fas fa-chart-line mr-3"></i>
@@ -311,7 +636,7 @@
             <a
               id="navItem"
               href="#form5"
-              class="flex items-center p-3 text-white rounded-lg hover:bg-gray-100 hover:text-black transition"
+              class="flex items-center p-3 text-white hover:bg-gray-100 hover:text-black transition hover:rounded-lg"
               style="border: none;"
             >
               <i class="fas fa-cog mr-3"></i>
@@ -350,51 +675,125 @@
       id="mainContent"
       name="form1"
     >
-      <div class="bg-white shadow rounded-lg p-6 mb-6">
-        <div class="bg-white rounded-lg p-6 mb-6">
-          <h2 class="text-lg font-semibold mb-4"><i class="fas fa-calendar-alt"></i> Your Schedule</h2>
-          <ul id="scheduleList" class="space-y-4">
-            <li class="text-gray-500">Loading schedule...</li>
-          </ul>
+      <div class="bg-white shadow rounded-lg p-6 mb-6 min-h-screen">
+        
+        <div id="roomScheduleContainer" data-active-room="" class="hidden p-4 rounded-lg bg-white mt-4">
+          <div class="flex justify-between items-center mb-4">
+            <div class="flex items-center">
+              <button id="backToRoomsButton" onclick="backToRooms()" class="text-blue-700 px-3 py-1 rounded-lg hover:bg-gray-300 transition mr-3">
+                <i class="fas fa-reply"></i>
+              </button>
+              <h3 id="roomScheduleTitle" class="text-lg font-bold text-blue-700">Room Schedule</h3>
+            </div>
+            <div id="roomScheduleKebabMenu" class="kebab-menu relative">
+              <!-- Kebab menu will be populated dynamically -->
+            </div>
+          </div>
+
+          <!-- Elements for non-supervisor rooms -->
+          <div id="nonSupervisorElements" class="hidden">
+            <div id="roomScheduleTable"></div>
+            <div class="flex justify-center mt-4">
+                <button id="prevPage" class="px-3 py-1 mr-3 bg-gray-200 rounded"><i class="fas fa-chevron-left"></i></button>
+                <span id="pageInfo" class="px-3 py-1 text-sm text-gray-600"></span>
+                <button id="nextPage" class="px-3 py-1 ml-3 bg-gray-200 rounded"><i class="fas fa-chevron-right"></i></button>
+            </div>
+
+            <p
+              id="result"
+              class="text-center text-lg font-semibold text-gray-800 pb-5 pt-5"
+            ></p>
+
+            <div class="mt-4 p-4 bg-gray-50 rounded-lg">
+              <h4 class="text-md font-semibold mb-3 text-gray-700">Set Supervisor Zone</h4>
+              <div id="supervisorZoneInput" class="flex gap-2">
+                <input
+                  id="supervisorRoomCodeInput"
+                  type="text"
+                  placeholder="Enter supervisor room code"
+                  class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all"
+                />
+                <button
+                  onclick="setSupervisorZone()"
+                  class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center gap-2"
+                >
+                  <i class="fas fa-map-marker-alt"></i>
+                  Set Zone
+                </button>
+              </div>
+              <p id="supervisorZoneConnected" class="text-sm mt-2 text-center text-green-600 hidden"></p>
+              <p id="setZoneStatus" class="text-sm mt-2 text-center text-red-600"></p>
+            </div>
+
+            <div class="flex justify-center mb-4 mt-4">
+              <button
+                id="timeInButton"
+                onclick="checkGeofence()"
+                class="bg-blue-600 text-white px-6 py-2 rounded-lg shadow hover:bg-blue-700 transition"
+                style="opacity: 1;"
+              >
+                Time In
+              </button>
+              <button
+                id="timeOutButton"
+                onclick="timeOut()"
+                class="bg-red-600 text-white px-6 py-2 rounded-lg shadow hover:bg-red-700 transition ml-4"
+                style="opacity: 0.5;"
+              >
+                Time Out
+              </button>
+            </div>
+          </div>
+
         </div>
 
-        <p
-          id="result"
-          class="text-center text-lg font-semibold text-gray-800 pb-5"
-        ></p>
+        <ul id="joinedRoomsList" class="text-center text-lg font-semibold text-gray-800 pb-3"></ul>
 
-        <div class="flex justify-center mb-4">
+        <div class="mt-6">
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold">Rooms</h2>
+            <div class="flex items-center gap-2">
+              <input
+                type="text"
+                id="roomSearch"
+                placeholder="Search rooms..."
+                class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all"
+              />
+              
+              <button
+                onclick="filterRooms()"
+                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+              >
+                <i class="fas fa-search"></i>
+              </button>
+            </div>
+          </div>
+          <div id="internRooms" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <!-- Cards will be dynamically inserted here -->
+          </div>
+        </div>
+
+        <div class="fixed bottom-6 right-10 z-50">
           <button
-            id="timeInButton"
-            onclick="checkGeofence()"
-            class="bg-blue-600 text-white px-6 py-2 rounded-lg shadow hover:bg-blue-700 transition"
-            style="opacity: 1;"
+            onclick="openJoinRoomModal()"
+            class="bg-blue-600 text-white rounded-full hover:bg-blue-700 transition shadow-lg w-12 h-12 flex items-center justify-center"
+            title="Join Room"
           >
-            Time In
-          </button>
-          <button
-            id="timeOutButton"
-            onclick="timeOut()"
-            class="bg-red-600 text-white px-6 py-2 rounded-lg shadow hover:bg-red-700 transition ml-4"
-            style="opacity: 0.5;"
-          >
-            Time Out
+            <i class="fas fa-plus text-xl"></i>
           </button>
         </div>
+
       </div>
     </div>
 
-    <!--<div id="map" class="h-70 rounded-xl shadow mb-4"></div>-->
-
-    <!-- Circular Progress Bar for Total Hours -->
+    <!-- Circular Progress Bars for Each Room -->
     <div class="lg:ml-64 min-h-screen p-4" name="form2">
       <div class="bg-white shadow rounded-lg p-6 mb-6">
-        <div class="progress-container">
-          <div class="circular-progress" id="hoursProgress" style="--progress: 0deg;">
-            <span class="progress-value" id="hoursValue"></span>
-          </div>
+        <h2 class="text-xl font-bold mb-6 text-center">Progress Tracking</h2>
+        <div id="roomProgressContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <!-- Room progress bars will be dynamically inserted here -->
+          <div class="text-center text-gray-500">Loading room progress...</div>
         </div>
-        <div class="progress-label">Total Hours Completed</div>
       </div>
     </div> 
 
@@ -410,25 +809,176 @@
     </div>
 
     <div class="lg:ml-64 min-h-screen p-4" name="form4">
-      <div class="bg-white shadow rounded-lg p-6 mb-6" >
-        Journal Submission here
+      <div class="bg-white shadow rounded-lg p-6 mb-6">
+        <h2 class="text-xl font-bold mb-6 text-center">Reports & Analytics</h2>
+
+        <!-- Journal Submission Section -->
+        <div class="mb-8">
+          <h3 class="text-lg font-semibold mb-4">📝 Journal Submission</h3>
+          <form id="journalForm" class="space-y-4">
+            <div>
+              <label for="journalTitle" class="block text-sm font-medium text-gray-700 mb-1">Title</label>
+              <input
+                type="text"
+                id="journalTitle"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all"
+                placeholder="Enter journal title"
+                required
+              />
+            </div>
+            <div>
+              <label for="journalContent" class="block text-sm font-medium text-gray-700 mb-1">Content</label>
+              <textarea
+                id="journalContent"
+                rows="6"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all"
+                placeholder="Write your journal entry here..."
+                required
+              ></textarea>
+            </div>
+            <div>
+              <label for="journalDate" class="block text-sm font-medium text-gray-700 mb-1">Date</label>
+              <input
+                type="date"
+                id="journalDate"
+                class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all"
+                required
+              />
+            </div>
+            <button
+              type="submit"
+              class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-2"
+            >
+              <i class="fas fa-paper-plane"></i>
+              Submit Journal
+            </button>
+          </form>
+          <p id="journalStatus" class="text-sm mt-2 text-center text-red-600"></p>
+        </div>
+
+        <!-- Charts Section -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <!-- Time Logs Chart -->
+          <div class="bg-gray-50 p-4 rounded-lg">
+            <h4 class="text-md font-semibold mb-4">Time Logs This Week</h4>
+            <canvas id="timeLogsChart" width="400" height="200"></canvas>
+          </div>
+
+          <!-- Progress Over Time Chart -->
+          <div class="bg-gray-50 p-4 rounded-lg">
+            <h4 class="text-md font-semibold mb-4">Progress Over Time</h4>
+            <canvas id="progressChart" width="400" height="200"></canvas>
+          </div>
+        </div>
+
+        <!-- Hours Worked Summary -->
+        <div class="mt-6 bg-gray-50 p-4 rounded-lg">
+          <h4 class="text-md font-semibold mb-4">Hours Worked Summary</h4>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="text-center">
+              <div class="text-2xl font-bold text-blue-600" id="totalHours">0</div>
+              <div class="text-sm text-gray-600">Total Hours</div>
+            </div>
+            <div class="text-center">
+              <div class="text-2xl font-bold text-green-600" id="thisWeekHours">0</div>
+              <div class="text-sm text-gray-600">This Week</div>
+            </div>
+            <div class="text-center">
+              <div class="text-2xl font-bold text-purple-600" id="averageHours">0</div>
+              <div class="text-sm text-gray-600">Daily Average</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
     <div class="lg:ml-64 min-h-screen p-4" name="form5">
       <div class="bg-white shadow rounded-lg p-6 mb-6">
-       <h2 class="text-lg font-semibold mb-2">Supervisor Information</h2>
-        <p>
-          <strong>Name:</strong> <span id="supervisorName">Loading...</span>
-        </p>
-        <p>
-          <strong>Company:</strong>
-          <span id="supervisorCompany">Loading...</span>
-        </p>
-        <p>
-          <strong>Geofence Center:</strong>
-          <span id="geofenceCoords">Loading...</span>
-        </p>
+        <h2 class="text-xl font-bold mb-6 text-center">Settings</h2>
+
+        <!-- Profile Settings -->
+        <div class="mb-8">
+          <h3 class="text-lg font-semibold mb-4">Profile Settings</h3>
+          <div class="space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <h4 class="text-md font-medium text-gray-700">Edit Profile</h4>
+                <p class="text-sm text-gray-500">Update your personal information</p>
+              </div>
+              <button
+                onclick="openProfileModal()"
+                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-2"
+              >
+                <i class="fas fa-edit"></i>
+                Edit
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Appearance Settings -->
+        <div class="mb-8">
+          <h3 class="text-lg font-semibold mb-4">Appearance</h3>
+          <div class="space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <h4 class="text-md font-medium text-gray-700">Dark Mode</h4>
+                <p class="text-sm text-gray-500">Toggle between light and dark theme</p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="darkModeToggle" class="sr-only peer">
+                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Notification Settings -->
+        <div class="mb-8">
+          <h3 class="text-lg font-semibold mb-4">Notifications</h3>
+          <div class="space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <h4 class="text-md font-medium text-gray-700">Task Reminders</h4>
+                <p class="text-sm text-gray-500">Get notified about upcoming tasks</p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="taskRemindersToggle" class="sr-only peer" checked>
+                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+              </label>
+            </div>
+            <div class="flex items-center justify-between">
+              <div>
+                <h4 class="text-md font-medium text-gray-700">Time Tracking Alerts</h4>
+                <p class="text-sm text-gray-500">Receive alerts for time tracking</p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="timeTrackingAlertsToggle" class="sr-only peer" checked>
+                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Supervisor Information -->
+        <div class="mb-8">
+          <h3 class="text-lg font-semibold mb-4">Supervisor Information</h3>
+          <div class="space-y-2">
+            <p>
+              <strong>Name:</strong> <span id="supervisorName">Loading...</span>
+            </p>
+            <p>
+              <strong>Company:</strong>
+              <span id="supervisorCompany">Loading...</span>
+            </p>
+            <p>
+              <strong>Geofence Center:</strong>
+              <span id="geofenceCoords">Loading...</span>
+            </p>
+          </div>
+        </div>
+
+        <!--<div id="map" class="w-full rounded-xl border shadow mb-6" style="height: 400px;"></div>-->
       </div>
     </div>
 
@@ -441,11 +991,22 @@
           forms.forEach(form => {
               const formElement = document.querySelector(`[name="${form}"]`);
               if (form === formName) {
-                  formElement.style.display = 'block'; // Show selected form
+                formElement.style.display = 'block'; // Show selected form
+                formElement.classList.add('border-b'); // Add border-bottom to active form
               } else {
-                  formElement.style.display = 'none'; // Hide other forms
+                formElement.style.display = 'none'; // Hide other forms
+                formElement.classList.remove('border-b'); // Remove border-bottom from inactive forms
               }
           });
+
+          // Update sidebar active link border
+          document.querySelectorAll('#sidebar a').forEach(link => {
+              link.style.borderBottom = 'none';
+          });
+          const activeLink = document.querySelector(`#sidebar a[href="#${formName}"]`);
+          if (activeLink) {
+              activeLink.style.borderBottom = '1px solid #ffff';
+          }
       }
 
       // Set default form to show
@@ -457,43 +1018,14 @@
               event.preventDefault(); // Prevent default anchor behavior
               const formName = event.target.closest('a').getAttribute('href').substring(1); // Get form name from href
               showForm(formName); // Show the selected form
+
+              // Load room progress when navigating to form2 (Room Progress Tracking)
+              if (formName === 'form2') {
+                  loadRoomProgress();
+              }
           });
       });
     </script>
 
-    <script>
-      // Mobile menu toggle
-      const mobileMenuButton = document.getElementById("mobile-menu-button");
-      const overlay = document.getElementById("overlay");
-      const menuIcon = document.getElementById("menu-icon");
-
-      function toggleSidebar() {
-        sidebar.classList.toggle("-translate-x-full");
-        overlay.classList.toggle("hidden");
-
-        if (!sidebar.classList.contains("-translate-x-full")) {
-          mobileMenuButton.style.transform = "translateX(230px)";
-          menuIcon.classList.remove("fa-bars");
-          menuIcon.classList.add("fa-arrow-left");
-        } else {
-          mobileMenuButton.style.transform = "translateX(0)";
-          menuIcon.classList.remove("fa-arrow-left");
-          menuIcon.classList.add("fa-bars");
-        }
-      }
-
-      mobileMenuButton.addEventListener("click", toggleSidebar);
-      overlay.addEventListener("click", toggleSidebar);
-
-      window.addEventListener("DOMContentLoaded", loadTotalHours);
-
-      // Close sidebar when clicking outside on mobile
-      window.addEventListener("resize", function () {
-        if (window.innerWidth >= 1024) {
-          sidebar.classList.remove("-translate-x-full");
-          overlay.classList.add("hidden");
-        }
-      });
-    </script>
   </body>
 </html>
