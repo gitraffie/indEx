@@ -432,6 +432,19 @@ let currentPage = 1;
 const pageSize = 5;
 let currentSchedules = [];
 
+// Function to display result messages
+function showResultMessage(message, type) {
+  const resultDiv = document.getElementById('result');
+  if (resultDiv) {
+    resultDiv.textContent = message;
+    resultDiv.className = `text-center text-lg font-semibold pb-5 pt-5 ${
+      type === 'error' ? 'text-red-600' :
+      type === 'success' ? 'text-green-600' :
+      'text-blue-600'
+    }`;
+  }
+}
+
 async function displayRoomSchedule(roomCode) {
     const container = document.getElementById("roomScheduleContainer");
     const nonSupervisorElements = document.getElementById("nonSupervisorElements");
@@ -799,36 +812,19 @@ async function checkGeofence(roomCode = null) {
                     }
 
                     // Record intern report for time in
-                    try {
-                        // Check if intern already has a report for today and this room
-                        const today = new Date();
-                        const todayStr = today.toISOString().split('T')[0]; // YYYY-MM-DD format
-                        const existingReports = await db.collection("intern_reports")
-                            .where("internEmail", "==", auth.currentUser.email)
-                            .where("roomCode", "==", targetRoomCode)
-                            .where("createdAt", ">=", new Date(todayStr))
-                            .where("createdAt", "<", new Date(todayStr + "T23:59:59"))
-                            .limit(1)
-                            .get();
+                    console.log("DEBUG: Auth state:", auth.currentUser);
+                    console.log("DEBUG: Auth token:", auth.currentUser ? auth.currentUser.getIdToken() : "No token");
 
-                        if (!existingReports.empty) {
-                            // Update existing report
-                            const reportDoc = existingReports.docs[0];
-                            await reportDoc.ref.update({
-                                timeIn: new Date(),
-                                mark: mark,
-                                updatedAt: new Date()
-                            });
-                        } else {
-                            // Create new report
-                            await db.collection("intern_reports").add({
-                                internEmail: auth.currentUser.email,
-                                timeIn: new Date(),
-                                mark: mark,
-                                roomCode: targetRoomCode,
-                                createdAt: new Date()
-                            });
-                        }
+                    try {
+                        // Always create new report document (consistent with time-out)
+                        const internReportsRef = db.collection("intern_reports").doc();
+                        await internReportsRef.set({
+                            internEmail: auth.currentUser.email.toLowerCase(),
+                            timeIn: new Date(),
+                            mark: mark,
+                            roomCode: targetRoomCode,
+                            createdAt: new Date()
+                        });
                     } catch (err) {
                         console.error("Failed to record intern report time in:", err);
                     }
@@ -1036,7 +1032,7 @@ async function timeOut() {
                     // Record intern report for time out
                     const internReportsRef = db.collection("intern_reports").doc();
                     internReportsRef.set({
-                        internEmail: auth.currentUser.email,
+                        internEmail: auth.currentUser.email.toLowerCase(),
                         timeOut: new Date(),
                         labor_except: laborExcept,
                         roomCode: activeRoom,
@@ -1628,7 +1624,8 @@ async function fetchJoinedRooms() {
         }
 
         const card = document.createElement("div");
-        card.className = "border rounded-lg shadow-md p-4 bg-white hover:shadow-lg transition cursor-pointer mb-3";
+        card.className = "border rounded-lg shadow-md p-4 hover:shadow-lg transition cursor-pointer mb-3";
+        card.style.backgroundColor = "#4174b8";
         card.id = `room-card-${room.joinCode || room.roomCode || code}`;
 
         // Handle different field name variations
@@ -1655,10 +1652,10 @@ async function fetchJoinedRooms() {
         card.innerHTML = `
           <img src="/images/indexbg.webp" alt="Room Image" class="w-full h-30 object-fill rounded-lg mb-4 bg-blue-700">
           <div class="flex justify-between items-start mb-2">
-            <h3 class="text-lg font-bold text-blue-700 flex-1">${roomName}</h3>
+            <h3 class="text-lg font-bold text-white flex-1">${roomName}</h3>
             <div class="kebab-menu relative">
-              <button class="kebab-button" onclick="toggleKebabMenu('${roomCodeDisplay}', event)">
-                <i class="fas fa-ellipsis-v"></i>
+                <button class="kebab-button" onclick="toggleKebabMenu('${roomCodeDisplay}', event)">
+                <i class="fas fa-ellipsis-v" style="color: white;"></i>
               </button>
               <div id="popover-${roomCodeDisplay}" class="popover">
                 <button class="popover-item leave-room" onclick="leaveRoom('${roomCodeDisplay}')">
@@ -1667,8 +1664,8 @@ async function fetchJoinedRooms() {
               </div>
             </div>
           </div>
-          <p class="text-xs text-gray-500">Code: ${roomCodeDisplay}</p>
-          <p class="text-xs text-gray-400 mt-2">${roomDescription}</p>
+          <p class="text-xs text-gray-300">Code: ${roomCodeDisplay}</p>
+          <p class="text-xs text-gray-300 mt-2">${roomDescription}</p>
         `;
         //<p class="text-sm text-gray-600 mb-2">${roomDescription}</p>
         //<p class="text-xs text-gray-400 mt-2">${room.supervisorEmail ? 'Supervisor/Principal' : 'Coordinator/Instructor'}</p>
@@ -1906,9 +1903,21 @@ async function setSupervisorZone() {
   const setZoneStatus = document.getElementById('setZoneStatus');
   setZoneStatus.textContent = '';
 
+  // Show spinner and disable button
+  const button = document.getElementById('setZoneButton');
+  const spinner = document.getElementById('setZoneSpinner');
+  const text = document.getElementById('setZoneText');
+  button.disabled = true;
+  spinner.classList.remove('hidden');
+  text.textContent = 'Connecting...';
+
   if (!roomCode) {
     setZoneStatus.textContent = 'Please enter a supervisor room code.';
     setZoneStatus.style.color = 'red';
+    // Hide spinner and enable button
+    button.disabled = false;
+    spinner.classList.add('hidden');
+    text.textContent = 'Set Zone';
     return;
   }
 
@@ -1922,6 +1931,10 @@ async function setSupervisorZone() {
     if (roomSnap.empty) {
       setZoneStatus.textContent = 'Room not found with the given code.';
       setZoneStatus.style.color = 'red';
+      // Hide spinner and enable button
+      button.disabled = false;
+      spinner.classList.add('hidden');
+      text.textContent = 'Set Zone';
       return;
     }
 
@@ -1948,6 +1961,10 @@ async function setSupervisorZone() {
     if (!geofenceSnap.exists) {
       setZoneStatus.textContent = 'No geofence found for this supervisor room.';
       setZoneStatus.style.color = 'red';
+      // Hide spinner and enable button
+      button.disabled = false;
+      spinner.classList.add('hidden');
+      text.textContent = 'Set Zone';
       return;
     }
 
@@ -2004,6 +2021,11 @@ async function setSupervisorZone() {
     setZoneStatus.style.color = 'green';
     setZoneStatus.textContent = 'Successfully joined supervisor room and set geofence zone.';
 
+    // Hide spinner and enable button immediately after success
+    button.disabled = false;
+    spinner.classList.add('hidden');
+    text.textContent = 'Set Zone';
+
     // Clear the success message after 2 seconds
     setTimeout(() => {
         setZoneStatus.textContent = '';
@@ -2011,9 +2033,12 @@ async function setSupervisorZone() {
 
   } catch (error) {
     console.error('Error setting supervisor zone:', error);
-    // Reload the page after successful zone connection
-    location.reload();
-    alert('Successfully connected.');
+    setZoneStatus.style.color = 'red';
+    setZoneStatus.textContent = 'Error setting supervisor zone: ' + error.message;
+    // Hide spinner and enable button
+    button.disabled = false;
+    spinner.classList.add('hidden');
+    text.textContent = 'Set Zone';
   }
 }
 
