@@ -20,33 +20,62 @@ let map = null;
 let internMarker = null;
 let geofenceCircle = null;
 let mapInitialized = false;
+let infoWindow = null;
 
-// Function to show result messages using SweetAlert
-function showResultMessage(message, type = 'info') {
-  if (type === 'info') {
-    Swal.fire({
-      title: message,
-      //html: "Processing... <b></b>",
-      timer: 3000,
-      timerProgressBar: true,
-      didOpen: () => {
-        Swal.showLoading();
-        const timer = Swal.getPopup().querySelector("b");
-        timerInterval = setInterval(() => {
-          timer.textContent = `${Swal.getTimerLeft()}`;
-        }, 100);
-      },
-      willClose: () => {
-        clearInterval(timerInterval);
+// Function to check and update supervisor zone UI
+async function checkSupervisorZoneStatus() {
+  try {
+    const internRef = db.collection("interns").doc(auth.currentUser.uid);
+    const internDoc = await internRef.get();
+    if (!internDoc.exists) return;
+    const internData = internDoc.data();
+    const joinedCodes = internData.rooms || [];
+    // Find supervisor rooms by checking "rooms" collection and if current user is in "interns" field
+    let supervisorRoomCode = null;
+    for (const roomCode of joinedCodes) {
+      const roomSnap = await db.collection("rooms").where("joinCode", "==", roomCode).limit(1).get();
+      if (!roomSnap.empty) {
+        const roomData = roomSnap.docs[0].data();
+        // Check if the room has a supervisorEmail field (indicating it's a supervisor room)
+        if (!roomData.supervisorEmail) {
+          continue; // Skip to the next room if no supervisorEmail
+        }
+        const interns = roomData.interns || [];
+        if (interns.includes(auth.currentUser.email)) {
+          supervisorRoomCode = roomCode;
+          break;
+        }
       }
-    });
-  } else {
-    Swal.fire({
-      icon: type,
-      title: message,
-      confirmButtonColor: '#4174b8',
-      timer: type === 'success' ? 3000 : undefined, // Auto-close success messages after 3 seconds
-    });
+    }
+    const inputDiv = document.getElementById('supervisorZoneInput');
+    const connectedMsg = document.getElementById('supervisorZoneConnected');
+    const input = document.getElementById('supervisorRoomCodeInput');
+    const button = document.querySelector('#supervisorZoneInput button');
+    if (supervisorRoomCode) {
+      // Hide input and button, show connected message with disconnect button
+      inputDiv.style.display = 'none';
+      connectedMsg.classList.remove('hidden');
+      connectedMsg.innerHTML = `
+        <p>Connected to supervisor zone: <strong>${supervisorRoomCode}</strong></p>
+        <div class="flex gap-2 mt-2">
+          <a href="#" onclick="toggleMapModal()" class="px-3 py-1 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition flex items-center gap-1">
+            <i class="fas fa-map"></i>
+            View Map
+          </a>
+          <button onclick="disconnectSupervisorZone()" class="px-3 py-1 bg-red-600 text-white text-xs rounded-lg hover:bg-red-700 transition flex items-center gap-1">
+            <i class="fas fa-unlink"></i>
+            Disconnect
+          </button>
+        </div>
+      `;
+    } else {
+      // Show input and button, hide connected message
+      inputDiv.style.display = 'flex';
+      connectedMsg.classList.add('hidden');
+      input.value = '';
+    }
+  } catch (error) {
+    console.error('Error checking supervisor zone status:', error);
   }
 }
 
@@ -286,19 +315,18 @@ auth.onAuthStateChanged(async (user) => {
 
                         if (!mapInitialized) {
                             console.log("🔍 DEBUG loadInternData: Creating new map instance");
-                            map = L.map("map").setView([10.7502, 121.9324], 15);
-                            L.tileLayer(
-                                "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-                                {
-                                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-                                    maxZoom: 19,
-                                }
-                            ).addTo(map);
+                            map = L.map('map').setView([10.7502, 121.9324], 15);
+                            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                                maxZoom: 19,
+                            }).addTo(map);
                             mapInitialized = true;
                             console.log("🔍 DEBUG loadInternData: Map initialized successfully");
                         } else {
                             console.log("🔍 DEBUG loadInternData: Map already exists, setting view to geofence center");
-                            map.setView(geofenceCenter, 17);
+                            if (map) {
+                                map.setView([geofenceCenter[0], geofenceCenter[1]], 17);
+                            }
                         }
 
                         // Remove previous geofence circle if exists
@@ -312,22 +340,11 @@ auth.onAuthStateChanged(async (user) => {
                             radius: geofenceRadius,
                             color: "red",
                             fillColor: "#f03",
-                            fillOpacity: 0.3,
+                            fillOpacity: 0.3
                         }).addTo(map);
 
                         // Fit the map to the geofence bounds to showcase the whole circle
                         map.fitBounds(geofenceCircle.getBounds());
-
-                        console.log("🔍 DEBUG loadInternData: Invalidating map size");
-                        map.invalidateSize();
-
-                        // Force another invalidate after a delay
-                        setTimeout(() => {
-                            if (map) {
-                                console.log("🔍 DEBUG loadInternData: Second invalidateSize call");
-                                map.invalidateSize();
-                            }
-                        }, 500);
                     }, 300);
                 }
             } else {
@@ -440,60 +457,96 @@ async function displayRoomSchedule(roomCode) {
     // Check if geofence exists for this room (supervisor room)
     const geoSnap = await db.collection("geofences").doc(roomCode).get();
     if (geoSnap.exists) {
-        // This is a supervisor room - show message that supervisor rooms are not supported
-        nonSupervisorElements.classList.remove("hidden");
-        tableDiv.innerHTML = "<p class='text-center text-gray-500 py-8'>Supervisor rooms are not supported in the intern interface.</p>";
+        // This is a supervisor room - show supervisor elements with map
+        nonSupervisorElements.classList.add("hidden");
+        const supervisorElements = document.getElementById("supervisorElements");
+        supervisorElements.classList.remove("hidden");
+
+        // Initialize map for supervisor room with delay to ensure div is rendered
+        setTimeout(() => {
+            const geofenceData = geoSnap.data();
+            const center = geofenceData.center;
+            const radius = geofenceData.radius || 100;
+
+            // Clear any existing map
+            const mapDiv = document.getElementById("roomMap");
+            mapDiv.innerHTML = "";
+
+            // Create new Leaflet map instance
+            const supervisorMap = L.map(mapDiv).setView([center.lat, center.lng], 15);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                maxZoom: 19,
+            }).addTo(supervisorMap);
+
+            // Add geofence circle
+            const geofenceCircle = L.circle([center.lat, center.lng], {
+                radius: radius,
+                color: "red",
+                fillColor: "#f03",
+                fillOpacity: 0.3
+            }).addTo(supervisorMap);
+
+            // Fit map to geofence bounds
+            supervisorMap.fitBounds(geofenceCircle.getBounds());
+
+            // Invalidate size after a short delay
+            setTimeout(() => {
+                supervisorMap.invalidateSize();
+            }, 100);
+        }, 100);
+
         return;
-    } else {
-        console.log("🔍 DEBUG displayRoomSchedule: No geofence found for room:", roomCode, "- showing schedule elements");
-        // This is a non-supervisor room - show schedule and other elements
-        nonSupervisorElements.classList.remove("hidden");
+    }
 
-        // Load schedule as before
-        tableDiv.innerHTML = "<p class='text-gray-500'>Loading schedule...</p>";
-        try {
-            const scheduleSnap = await db.collection("schedules")
-                .where("roomCode", "==", roomCode)
-                .limit(1)
-                .get();
+    console.log("🔍 DEBUG displayRoomSchedule: No geofence found for room:", roomCode, "- showing schedule elements");
+    // This is a non-supervisor room - show schedule and other elements
+    nonSupervisorElements.classList.remove("hidden");
 
-            if (scheduleSnap.empty) {
-                tableDiv.innerHTML = "<p class='text-gray-500'>No schedule found for this room.</p>";
-                return;
-            }
+    // Load schedule as before
+    tableDiv.innerHTML = "<p class='text-gray-500'>Loading schedule...</p>";
+    try {
+        const scheduleSnap = await db.collection("schedules")
+            .where("roomCode", "==", roomCode)
+            .limit(1)
+            .get();
 
-            const dailyTimes = scheduleSnap.docs[0].data().dailyTimes || [];
-            if (dailyTimes.length === 0) {
-                tableDiv.innerHTML = "<p class='text-gray-500'>No schedule entries for this room.</p>";
-                return;
-            }
-
-            currentSchedules = dailyTimes.sort((a, b) => {
-                const dateA = a.date?.toDate ? a.date.toDate() : new Date(a.date);
-                const dateB = b.date?.toDate ? b.date.toDate() : new Date(b.date);
-                return dateB - dateA;
-            });
-
-            currentPage = 1;
-            renderScheduleTable();
-
-            // Pagination controls
-            document.getElementById("prevPage").onclick = () => {
-                if (currentPage > 1) {
-                    currentPage--;
-                    renderScheduleTable();
-                }
-            };
-            document.getElementById("nextPage").onclick = () => {
-                if (currentPage < Math.ceil(currentSchedules.length / pageSize)) {
-                    currentPage++;
-                    renderScheduleTable();
-                }
-            };
-        } catch (err) {
-            console.error("Failed to fetch room schedule:", err);
-            tableDiv.innerHTML = "<p class='text-red-500'>❌ Failed to load schedule.</p>";
+        if (scheduleSnap.empty) {
+            tableDiv.innerHTML = "<p class='text-gray-500'>No schedule found for this room.</p>";
+            return;
         }
+
+        const dailyTimes = scheduleSnap.docs[0].data().dailyTimes || [];
+        if (dailyTimes.length === 0) {
+            tableDiv.innerHTML = "<p class='text-gray-500'>No schedule entries for this room.</p>";
+            return;
+        }
+
+        currentSchedules = dailyTimes.sort((a, b) => {
+            const dateA = a.date?.toDate ? a.date.toDate() : new Date(a.date);
+            const dateB = b.date?.toDate ? b.date.toDate() : new Date(b.date);
+            return dateB - dateA;
+        });
+
+        currentPage = 1;
+        renderScheduleTable();
+
+        // Pagination controls
+        document.getElementById("prevPage").onclick = () => {
+            if (currentPage > 1) {
+                currentPage--;
+                renderScheduleTable();
+            }
+        };
+        document.getElementById("nextPage").onclick = () => {
+            if (currentPage < Math.ceil(currentSchedules.length / pageSize)) {
+                currentPage++;
+                renderScheduleTable();
+            }
+        };
+    } catch (err) {
+        console.error("Failed to fetch room schedule:", err);
+        tableDiv.innerHTML = "<p class='text-red-500'>❌ Failed to load schedule.</p>";
     }
 }
 
@@ -1479,6 +1532,8 @@ async function joinRoom() {
     }
 }
 
+
+
 function openJoinRoomModal() {
 
     const modal = document.getElementById("joinRoomModal");
@@ -1553,6 +1608,8 @@ async function fetchJoinedRooms() {
       return;
     }
 
+    const noRoomsMessage = document.getElementById("noRoomsMessage");
+
     internRoomsDiv.innerHTML = "";
 
     for (const code of joinedCodes) {
@@ -1596,6 +1653,7 @@ async function fetchJoinedRooms() {
         }
         
         card.innerHTML = `
+          <img src="/images/indexbg.webp" alt="Room Image" class="w-full h-30 object-fill rounded-lg mb-4 bg-blue-700">
           <div class="flex justify-between items-start mb-2">
             <h3 class="text-lg font-bold text-blue-700 flex-1">${roomName}</h3>
             <div class="kebab-menu relative">
@@ -1645,6 +1703,27 @@ async function fetchJoinedRooms() {
           }
         });
       }
+    }
+
+    // Toggle visibility of noRoomsMessage based on whether coordinator rooms are joined
+    // Filter out supervisor rooms from joinedCodes
+    const coordinatorRooms = [];
+    for (const code of joinedCodes) {
+      const roomSnap = await db.collection("rooms")
+        .where("joinCode", "==", code)
+        .limit(1)
+        .get();
+      if (!roomSnap.empty) {
+        const room = roomSnap.docs[0].data();
+        if (!room.supervisorEmail) {
+          coordinatorRooms.push(code);
+        }
+      }
+    }
+    if (coordinatorRooms.length > 0) {
+      noRoomsMessage.classList.add("hidden");
+    } else {
+      noRoomsMessage.classList.remove("hidden");
     }
   } catch (err) {
     console.error("Error loading rooms:", err);
@@ -1699,6 +1778,10 @@ async function leaveRoom(roomCode) {
       });
     }
 
+    // Check if the room being left is a supervisor room (has geofence)
+    const geofenceSnap = await db.collection("geofences").doc(roomCode).get();
+    const isSupervisorRoom = geofenceSnap.exists;
+
     // Close the popover
     const popover = document.getElementById(`popover-${roomCode}`);
     if (popover) {
@@ -1719,7 +1802,15 @@ async function leaveRoom(roomCode) {
       toggleJoinRoomButton();
     }
 
-    alert("Successfully left the room!");
+    // If leaving a supervisor room, update supervisor zone status
+    if (isSupervisorRoom) {
+      await checkSupervisorZoneStatus();
+      alert("Successfully left the supervisor room! You have been disconnected from the supervisor zone.");
+    } else {
+      alert("Successfully left the room!");
+      disconnectSupervisorZone();
+      fetchJoinedRooms();
+    }
   } catch (err) {
     console.error("Failed to leave room:", err);
     alert("Failed to leave room. Please try again.");
@@ -1808,47 +1899,7 @@ document.addEventListener('click', function(event) {
   }
 });
 
-// Function to check and update supervisor zone UI
-async function checkSupervisorZoneStatus() {
-  try {
-    const internRef = db.collection("interns").doc(auth.currentUser.uid);
-    const internDoc = await internRef.get();
 
-    if (!internDoc.exists) return;
-
-    const internData = internDoc.data();
-    const joinedCodes = internData.rooms || [];
-
-    // Find supervisor rooms (rooms with geofences)
-    let supervisorRoomCode = null;
-    for (const roomCode of joinedCodes) {
-      const geofenceSnap = await db.collection("geofences").doc(roomCode).get();
-      if (geofenceSnap.exists) {
-        supervisorRoomCode = roomCode;
-        break;
-      }
-    }
-
-    const inputDiv = document.getElementById('supervisorZoneInput');
-    const connectedMsg = document.getElementById('supervisorZoneConnected');
-    const input = document.getElementById('supervisorRoomCodeInput');
-    const button = document.querySelector('#supervisorZoneInput button');
-
-    if (supervisorRoomCode) {
-      // Hide input and button, show connected message
-      inputDiv.style.display = 'none';
-      connectedMsg.classList.remove('hidden');
-connectedMsg.innerHTML = `Zone connected to: ${supervisorRoomCode} <a href="#" onclick="toggleMapModal()" style="margin-left: 8px; color: #4174b8; text-decoration: underline;" class="hover:underline hover:bg-white">View on map</a>`;
-    } else {
-      // Show input and button, hide connected message
-      inputDiv.style.display = 'flex';
-      connectedMsg.classList.add('hidden');
-      input.value = '';
-    }
-  } catch (error) {
-    console.error('Error checking supervisor zone status:', error);
-  }
-}
 
 async function setSupervisorZone() {
   const roomCode = document.getElementById('supervisorRoomCodeInput').value.trim();
@@ -1857,11 +1908,12 @@ async function setSupervisorZone() {
 
   if (!roomCode) {
     setZoneStatus.textContent = 'Please enter a supervisor room code.';
+    setZoneStatus.style.color = 'red';
     return;
   }
 
   try {
-    // First, check if the room exists and has a geofence
+    // Check if the room exists in "rooms" collection
     const roomSnap = await db.collection("rooms")
       .where("joinCode", "==", roomCode)
       .limit(1)
@@ -1869,48 +1921,37 @@ async function setSupervisorZone() {
 
     if (roomSnap.empty) {
       setZoneStatus.textContent = 'Room not found with the given code.';
+      setZoneStatus.style.color = 'red';
       return;
     }
 
     const roomData = roomSnap.docs[0].data();
     const roomRef = roomSnap.docs[0].ref;
+    const internEmail = auth.currentUser.email;
+
+    // Check if intern's email exists in the room's interns field
+    if (!roomData.interns || !roomData.interns.includes(internEmail)) {
+      // Save intern's email to the room's interns field
+      await roomRef.update({
+        interns: firebase.firestore.FieldValue.arrayUnion(internEmail)
+      });
+    }
+
+    // Add roomCode to intern's rooms array
+    const internRef = db.collection("interns").doc(auth.currentUser.uid);
+    await internRef.update({
+      rooms: firebase.firestore.FieldValue.arrayUnion(roomCode)
+    });
 
     // Check if geofence exists for this room
     const geofenceSnap = await db.collection("geofences").doc(roomCode).get();
     if (!geofenceSnap.exists) {
       setZoneStatus.textContent = 'No geofence found for this supervisor room.';
+      setZoneStatus.style.color = 'red';
       return;
     }
 
     const geofenceData = geofenceSnap.data();
-    const internEmail = auth.currentUser.email;
-
-    // Check if intern has already joined this room
-    const internRef = db.collection("interns").doc(auth.currentUser.uid);
-    const internDoc = await internRef.get();
-
-    if (!internDoc.exists) {
-      setZoneStatus.textContent = 'Intern data not found.';
-      return;
-    }
-
-    const internData = internDoc.data();
-    const joinedCodes = internData.rooms || [];
-
-    let isAlreadyJoined = joinedCodes.includes(roomCode);
-
-    // If not already joined, join the room first
-    if (!isAlreadyJoined) {
-      // Add roomCode to intern's rooms array
-      await internRef.update({
-        rooms: firebase.firestore.FieldValue.arrayUnion(roomCode)
-      });
-
-      // Add intern's email to room's interns array
-      await roomRef.update({
-        interns: firebase.firestore.FieldValue.arrayUnion(internEmail)
-      });
-    }
 
     // Check if intern_data document already exists for this intern and room
     const existingInternDataSnap = await db.collection("intern_data")
@@ -1955,24 +1996,83 @@ async function setSupervisorZone() {
     }
 
     // Refresh rooms list to show the newly joined room
-    if (isAlreadyJoined) {
-      await fetchJoinedRooms();
-    } else {
-      // Reload the page to refresh all data including the new room
-      location.reload();
-    }
+    await fetchJoinedRooms();
 
     // Update the UI to show connected status
     await checkSupervisorZoneStatus();
 
     setZoneStatus.style.color = 'green';
-    setZoneStatus.textContent = isAlreadyJoined
-      ? 'Geofence zone updated successfully.'
-      : 'Successfully joined supervisor room and set geofence zone.';
+    setZoneStatus.textContent = 'Successfully joined supervisor room and set geofence zone.';
+
+    // Clear the success message after 2 seconds
+    setTimeout(() => {
+        setZoneStatus.textContent = '';
+    }, 2000);
 
   } catch (error) {
     console.error('Error setting supervisor zone:', error);
-    setZoneStatus.textContent = 'Failed to set geofence zone. Please try again.';
+    // Reload the page after successful zone connection
+    location.reload();
+    alert('Successfully connected.');
+  }
+}
+
+async function disconnectSupervisorZone() {
+  if (!confirm('Are you sure you want to disconnect from the supervisor zone?')) {
+    return;
+  }
+
+  try {
+    const internRef = db.collection("interns").doc(auth.currentUser.uid);
+    const internDoc = await internRef.get();
+    if (!internDoc.exists) {
+      alert('Intern record not found.');
+      return;
+    }
+
+    const internData = internDoc.data();
+    const joinedCodes = internData.rooms || [];
+
+    // Find supervisor room code
+    let supervisorRoomCode = null;
+    for (const roomCode of joinedCodes) {
+      const roomSnap = await db.collection("rooms").where("joinCode", "==", roomCode).limit(1).get();
+      if (!roomSnap.empty) {
+        const roomData = roomSnap.docs[0].data();
+        if (roomData.supervisorEmail && roomData.interns && roomData.interns.includes(auth.currentUser.email)) {
+          supervisorRoomCode = roomCode;
+          break;
+        }
+      }
+    }
+
+    if (!supervisorRoomCode) {
+      alert('No supervisor zone found to disconnect from.');
+      return;
+    }
+
+    // Remove roomCode from intern's rooms array
+    await internRef.update({
+      rooms: firebase.firestore.FieldValue.arrayRemove(supervisorRoomCode)
+    });
+
+    // Remove intern's email from room's interns array
+    const roomSnap = await db.collection("rooms").where("joinCode", "==", supervisorRoomCode).limit(1).get();
+    if (!roomSnap.empty) {
+      const roomDoc = roomSnap.docs[0];
+      const roomRef = roomDoc.ref;
+      await roomRef.update({
+        interns: firebase.firestore.FieldValue.arrayRemove(auth.currentUser.email)
+      });
+    }
+
+    // Update UI to show disconnected status
+    await checkSupervisorZoneStatus();
+
+    alert('Successfully disconnected from the supervisor zone.');
+  } catch (err) {
+    console.error('Failed to disconnect from supervisor zone:', err);
+    alert('Failed to disconnect from supervisor zone. Please try again.');
   }
 }
 

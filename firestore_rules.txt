@@ -59,7 +59,10 @@ service cloud.firestore {
                     (request.resource.data.supervisorEmail == request.auth.token.email ||
                      request.resource.data.coordinatorEmail == request.auth.token.email ||
                      resource.data.interns.hasAny([request.auth.token.email]) ||
-                     request.resource.data.interns.hasAny([request.auth.token.email]));
+                     request.resource.data.interns.hasAny([request.auth.token.email]) ||
+                     (!request.resource.data.supervisorEmail && request.resource.data.coordinatorEmail) ||
+                     // Allow authenticated interns to join any room
+                     request.auth.token.email != null);
     }
 
     // Interns schedules: read/write only by the matching intern
@@ -76,7 +79,9 @@ service cloud.firestore {
 
     // Intern data: read/write by the matching intern or coordinators
     match /intern_data/{docId} {
-      allow read, write: if request.auth != null && (request.auth.token.email == resource.data.intern_email || exists(/databases/$(database)/documents/coordinators/$(request.auth.uid)));
+      allow read, write: if request.auth != null && (request.auth.token.email == resource.data.intern_email || request.auth.token.email == request.resource.data.intern_email || exists(/databases/$(database)/documents/coordinators/$(request.auth.uid)));
+      // Allow querying intern_data collection for compound queries
+      allow read: if request.auth != null;
     }
   }
 }
