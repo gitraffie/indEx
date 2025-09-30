@@ -522,18 +522,11 @@
       <!-- User Profile Section -->
       <div class="p-4" style="border-bottom: 1px solid #2c5aa0;">
         <div class="flex items-center">
-          <div
-            class="w-10 h-10 bg-blue-300 rounded-full flex items-center justify-center"
-          >
-            <img
-              id="userPic"
-              src="/images/default.webp"
-              alt="User Profile"
-              class="w-full h-full rounded-full object-cover"
-            />
+          <div class="w-10 h-10 bg-blue-300 rounded-full flex items-center justify-center border border-2">
+            <img id="userPic" src="/images/default.webp" alt="User Profile" class="w-full h-full rounded-full object-cover"/>
           </div>
           <div class="ml-3">
-            <p id="username" class="text-sm font-medium text-white">
+            <p id="username" class="text-sm font-medium text-white" style="margin-bottom: -1px; margin-top: 20px;">
               Intern Name
             </p>
             <p id="userEmail" class="text-xs text-gray-400">Intern Email</p>
@@ -724,7 +717,7 @@
             <h2 class="text-xl font-bold">Rooms</h2>
           </div>
 
-          <div id="noRoomsMessage" class="text-center py-8">
+          <div id="noRoomsMessage" class="text-center py-8 hidden">
             <i class="fas fa-inbox text-gray-400 text-4xl mb-2"></i>
             <p class="text-xl font-bold text-gray-400">You haven't joined any rooms yet.</p>
             <p class="text-sm text-gray-400 mt-2">Click the plus "+" icon on the bottom right, then enter the code provided by your coordinator.</p>

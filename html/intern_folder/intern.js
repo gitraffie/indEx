@@ -107,33 +107,30 @@ function toggleAuthMode() {
 }
 
 async function authAction() {
-    const email = document.getElementById("email").value;
-    const password = document.getElementById("password").value;
-    const fullName = document.getElementById("fullName").value;
-    const school = document.getElementById("school").value;
-    const supervisorEmail =
-    document.getElementById("supervisorEmail").value;
-    const code = document.getElementById("coordinatorCodeInput").value;
-    const rememberMe = document.getElementById("remember").checked;
-    const status = document.getElementById("authStatus");
+    const emailEl = document.getElementById("email");
+    const passwordEl = document.getElementById("password");
+    const fullNameEl = document.getElementById("fullName");
+    const schoolEl = document.getElementById("school");
+    const rememberEl = document.getElementById("remember");
+    const statusEl = document.getElementById("authStatus");
+
+    if (!emailEl || !passwordEl || !fullNameEl || !schoolEl || !rememberEl || !statusEl) {
+        console.error("Auth form elements not found");
+        return;
+    }
+
+    const email = emailEl.value;
+    const password = passwordEl.value;
+    const fullName = fullNameEl.value;
+    const school = schoolEl.value;
+    const rememberMe = rememberEl.checked;
+    const status = statusEl;
 
     // Store remember me preference
     localStorage.setItem("rememberMe", rememberMe);
 
     if (isRegisterMode) {
         try {
-            const snapshot = await db
-                .collection("supervisors")
-                .where("email", "==", supervisorEmail)
-                .get();
-            if (snapshot.empty) throw new Error("Supervisor not found");
-
-            const query = await db
-                .collection("coordinators")
-                .where("code", "==", code)
-                .get();
-            if (query.empty) throw new Error("Invalid coordinator code.");
-
             const cred = await auth.createUserWithEmailAndPassword(
                 email,
                 password
@@ -144,8 +141,8 @@ async function authAction() {
                 email,
                 name: fullName,
                 school,
-                supervisorEmail,
-                coordinatorCode: code,
+                supervisorEmail: null,
+                coordinatorCode: null,
                 createdAt: new Date(),
             });
             status.textContent =
@@ -571,7 +568,7 @@ function renderScheduleTable() {
     const pageData = currentSchedules.slice(start, end);
 
     let html = `
-        <table class="min-w-full text-sm text-left text-gray-500 shadow">
+        <table class="w-full text-sm text-left text-gray-500 shadow">
             <thead class="text-xs text-blue-700 uppercase bg-blue-100">
                 <tr>
                     <th class="px-2 py-2 md:px-4">Date</th>
@@ -1599,10 +1596,6 @@ async function fetchJoinedRooms() {
     }
 
     const joinedCodes = internDoc.data().rooms || [];
-    if (joinedCodes.length === 0) {
-      internRoomsDiv.innerHTML = "<p class='text-gray-500'>No rooms joined yet.</p>";
-      return;
-    }
 
     const noRoomsMessage = document.getElementById("noRoomsMessage");
 
