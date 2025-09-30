@@ -1,0 +1,28 @@
+{
+  "name": "INDEX Internship Management System",
+  "short_name": "INDEX",
+  "description": "A comprehensive platform for managing internships, time tracking, and coordination between interns, coordinators, and supervisors.",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4174b8",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/images/icon.ico",
+      "sizes": "16x16 32x32 48x48",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "/images/Rmainlogo.webp",
+      "sizes": "192x192",
+      "type": "image/webp"
+    },
+    {
+      "src": "/images/Rmainlogo.webp",
+      "sizes": "512x512",
+      "type": "image/webp"
+    }
+  ]
+}

@@ -3,10 +3,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Intern Coordinator Dashboard</title>
+  <title>INDEX: Coordinator</title>
+  <meta name="description" content="Coordinator dashboard for managing internships, time tracking, and intern coordination.">
+  <meta name="theme-color" content="#4174b8">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="INDEX Coordinator">
+  <link rel="manifest" href="../manifest.json">
+  <link rel="apple-touch-icon" href="../images/Rmainlogo.webp">
+  <link rel="icon" type="image/x-icon" href="../images/icon.ico">
 
   <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="../css/tailwind.css">
 
   <!-- Font Awesome -->
   <link
@@ -34,50 +42,219 @@
     .hidden {
       display: none;
     }
+
+    /* Sidebar styles */
+    .sidebar-transition {
+      transition: transform 0.3s ease-in-out;
+    }
+
+    .sidebar-overlay {
+      transition: opacity 0.3s ease-in-out;
+    }
+
+    /* Main content adjustment for sidebar */
+    .main-content {
+      margin-left: 0;
+      transition: margin-left 0.3s ease-in-out;
+    }
+
+    @media (min-width: 1024px) {
+      .main-content {
+        margin-left: 240px;
+      }
+    }
+
+    /* Mobile menu button */
+    .mobile-menu-button {
+      transition: transform 0.3s ease-in-out;
+    }
+
+    /* Active navigation item */
+    .nav-item.active {
+      background-color: rgba(255, 255, 255, 0.1);
+      border-radius: 0.5rem;
+    }
+
+    /* Modal backdrop fix for sidebar */
+    .modal-backdrop {
+      z-index: 60;
+    }
   </style>
 </head>
 <body class="bg-gray-100 text-gray-900" style="overflow-y: auto; -webkit-overflow-scrolling: touch;">
+  <!-- Mobile menu button - positioned to follow sidebar -->
+  <button
+    id="mobile-menu-button"
+    class="lg:hidden fixed top-4 left-4 z-50 bg-white p-2 rounded-lg shadow-lg transition-transform duration-300 ease-in-out"
+  >
+    <i id="menu-icon" class="fas fa-bars"></i>
+  </button>
+
+  <!-- Sidebar -->
+  <div
+    id="sidebar"
+    class="fixed left-0 top-0 h-full w-60 bg-white shadow-lg transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out z-40"
+    style="background-color: #4174b8"
+  >
+    <!-- Sidebar Header -->
+    <div class="p-4" style="border-bottom: 1px solid #2c5aa0;">
+      <div class="flex items-center justify-between">
+        <!-- Logo Image-->
+        <div class="flex justify-center">
+          <img
+            src="../images/Rmainlogo.webp"
+            alt="Logo"
+            style="width: 200px; height: 70px; object-fit: contain"
+          />
+        </div>
+      </div>
+    </div>
+
+    <!-- User Profile Section -->
+    <div class="p-4" style="border-bottom: 1px solid #2c5aa0;">
+      <div class="flex items-center">
+        <div
+          class="w-10 h-10 bg-blue-300 rounded-full flex items-center justify-center"
+        >
+          <img
+            id="userPic"
+            src="../images/default.webp"
+            alt="User Profile"
+            class="w-full h-full rounded-full object-cover"
+          />
+        </div>
+        <div class="ml-3">
+          <p id="username" class="text-sm font-medium text-white">
+            Coordinator Name
+          </p>
+          <p id="userEmail" class="text-xs text-gray-400">coordinator@email.com</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Navigation Menu -->
+    <nav class="p-4">
+      <ul class="space-y-2">
+        <li>
+          <a
+            id="dashboard-nav"
+            href="#dashboard"
+            class="flex items-center text-white p-3 hover:bg-gray-100 hover:text-black transition hover:rounded-lg nav-item active"
+            style="border: none;"
+          >
+            <i class="fas fa-home mr-3"></i>
+            <span>Dashboard</span>
+          </a>
+        </li>
+        <li>
+          <a
+            id="time-nav"
+            href="#time-tracking"
+            class="flex items-center p-3 text-white hover:bg-gray-100 hover:text-black transition hover:rounded-lg nav-item"
+            style="border: none;"
+          >
+            <i class="fas fa-clock mr-3"></i>
+            <span>Time Tracking</span>
+          </a>
+        </li>
+        <li>
+          <a
+            id="tasks-nav"
+            href="#tasks"
+            class="flex items-center p-3 text-white hover:bg-gray-100 hover:text-black transition hover:rounded-lg nav-item"
+            style="border: none;"
+          >
+            <i class="fas fa-tasks mr-3"></i>
+            <span>Tasks</span>
+          </a>
+        </li>
+        <li>
+          <a
+            id="reports-nav"
+            href="#reports"
+            class="flex items-center p-3 text-white hover:bg-gray-100 hover:text-black transition hover:rounded-lg nav-item"
+            style="border: none;"
+          >
+            <i class="fas fa-chart-line mr-3"></i>
+            <span>Reports</span>
+          </a>
+        </li>
+        <li>
+          <a
+            id="settings-nav"
+            href="#settings"
+            class="flex items-center p-3 text-white hover:bg-gray-100 hover:text-black transition hover:rounded-lg nav-item"
+            style="border: none;"
+          >
+            <i class="fas fa-cog mr-3"></i>
+            <span>Settings</span>
+          </a>
+        </li>
+      </ul>
+    </nav>
+
+    <!-- Logout Section -->
+    <div class="absolute bottom-0 left-0 right-0 p-4 border-t">
+      <button
+        onclick="coordinatorLogout()"
+        id="navItem"
+        class="flex items-center w-full p-3 text-white rounded-lg hover:bg-gray-100 transition"
+      >
+        <i class="fas fa-sign-out-alt mr-3"></i>
+        <span>Logout</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Overlay for mobile -->
+  <div
+    id="overlay"
+    class="fixed inset-0 bg-black bg-opacity-50 z-30 hidden lg:hidden"
+  ></div>
+
   <!-- 🔒 Login/Register Modal -->
   <div
     id="authModal"
-    class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+    class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 modal-backdrop"
   >
     <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
-      <h2 id="modalTitle" class="text-xl font-bold mb-4 text-center">
-        Coordinator Login
+      <img src="../images/mainlogo.webp" alt="Main Logo" class="h-24 mx-auto mb-4"/>
+      <h2 id="modalTitle" class="text-xl font-bold mb-4 text-center" style="color: #4174b8">
+        COORDINATOR LOGIN
       </h2>
       <input
         id="email"
         type="email"
         placeholder="Email"
-        class="w-full px-3 py-2 border rounded mb-3"
+        class="w-full px-3 py-2 border rounded mb-3 rounded-3xl"
       />
       <input
         id="password"
         type="password"
         placeholder="Password"
-        class="w-full px-3 py-2 border rounded mb-3"
+        class="w-full px-3 py-2 border rounded mb-3 rounded-3xl"
       />
       <div id="extraFields" class="hidden">
         <input
           id="fullName"
           type="text"
           placeholder="Full Name"
-          class="w-full px-3 py-2 border rounded mb-3"
+          class="w-full px-3 py-2 border rounded mb-3 rounded-3xl"
         />
         <input
           id="organization"
           type="text"
           placeholder="Organization"
-          class="w-full px-3 py-2 border rounded mb-3"
+          class="w-full px-3 py-2 border rounded mb-3 rounded-3xl"
         />
       </div>
       <button
         id="authButton"
-        onclick="authAction()"
-        class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition"
+        onclick="login()"
+        class="w-full text-white py-2 px-4 rounded-3xl hover:bg-blue-700 transition"
+        style="background-color: #4174b8"
       >
-        🔐 Log In
+        Log In
       </button>
       <p id="authStatus" class="text-sm mt-2 text-center text-red-600"></p>
       <p class="text-sm text-center mt-4">
@@ -94,35 +271,23 @@
   </div>
 
   <!-- 🗺️ Dashboard -->
-  <div id="dashboard" class="hidden max-w-5xl mx-auto px-6 py-8">
+  <div id="dashboard" class="hidden max-w-5xl mx-auto px-6 py-8 main-content">
     <h1 class="text-3xl font-bold mb-6 text-center">
-      📍 Coordinator Dashboard
+      COORDINATOR DASHBOARD
     </h1>
 
-    <!-- 🏠 Room Management -->
-    <div class="mt-10 bg-white p-4 rounded shadow">
-      <h2 class="text-2xl font-bold mb-4">🏠 Create Room</h2>
-      <p class="text-gray-600 text-sm mb-2">
-        Create a dedicated room for your interns. A unique join code will be generated.
-      </p>
-      <input
-        id="roomName"
-        type="text"
-        placeholder="Enter Room Name"
-        class="w-full px-3 py-2 border rounded mb-3"
-      />
-      <button
-        onclick="createRoom()"
-        class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition"
-      >
-        ➕ Create Room
-      </button>
-      <p id="roomStatus" class="text-sm mt-3 text-green-600"></p>
-    </div>
+    <!-- Floating Action Button for Create Room -->
+    <button
+      onclick="openCreateRoomModal()"
+      class="fixed flex items-center justify-center bottom-6 right-6 bg-blue-600 text-white p-4 rounded-full shadow-lg hover:bg-blue-700 transition duration-300 z-40 w-12 h-12"
+      title="Create Room"
+    >
+      <i class="fas fa-plus text-xl"></i>
+    </button>
 
-    <!-- 📜 Room List -->
+    <!-- 📜 Room List (Dashboard) -->
     <div class="mt-10 bg-white p-4 rounded shadow">
-      <h2 class="text-2xl font-bold mb-4">📜 My Rooms</h2>
+      <h2 class="text-2xl font-bold mb-4">My Rooms</h2>
       <ul id="roomList" class="space-y-3">
         <p class="text-sm text-gray-500">Loading rooms...</p>
       </ul>
@@ -215,6 +380,8 @@
       </div>
     </div>
 
+    <div><!-- Tasks (Menu 2) --></div>
+
     <div class="mt-10">
       <!-- 🔁 Log Out All Interns -->
       <div class="mt-10">
@@ -234,28 +401,54 @@
     </div>
   </div>
 
+  <!-- Tasks -->
+  <div id="tasks" class="hidden max-w-5xl mx-auto px-6 py-8 main-content">
+    <h1 class="text-3xl font-bold mb-6 text-center">
+      TASKS MANAGEMENT
+    </h1>
+
+    <!-- Create Task Button -->
+    <div class="mb-6">
+      <button
+        onclick="openCreateTaskModal()"
+        class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition"
+      >
+        <i class="fas fa-plus mr-2"></i> Create New Task
+      </button>
+    </div>
+
+    <!-- Tasks List -->
+    <div class="bg-white p-6 rounded-lg shadow">
+      <h2 class="text-2xl font-bold mb-4">Assigned Tasks</h2>
+      <div id="tasksList" class="space-y-4">
+        <p class="text-gray-500">Loading tasks...</p>
+      </div>
+    </div>
+  </div>
+
   <!-- Confirmation Modal -->
   <div
     id="confirmModal"
     style="display: none"
-    class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden"
+    class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden modal-backdrop"
   >
     <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm">
-      <h2 class="text-xl font-bold mb-4 text-center">Confirm Login</h2>
+      <img src="../images/mainlogo.webp" alt="Main Logo" class="h-24 mx-auto mb-4" />
+      <h2 class="text-xl font-bold mb-4 text-center" style="color: #4174b8">RECENT LOGIN</h2>
       <p class="text-center mb-4">
-        Logged in as <strong id="loggedInEmail"></strong>
+        Logged in as <strong id="loggedInEmail" style="border-bottom: solid 1px ;"></strong>
       </p>
       <button
         onclick="proceedToDashboard()"
         class="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700 mb-2"
       >
-        ✅ Continue
+        Continue
       </button>
       <button
         onclick="logoutAndReset()"
         class="w-full bg-gray-500 text-white py-2 rounded hover:bg-gray-600"
       >
-        🔄 Use Different Account
+        Use Different Account
       </button>
     </div>
   </div>
@@ -263,151 +456,150 @@
   <!-- Modal 1: Schedule Input -->
   <div
     id="scheduleInputModal"
-    class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center"
+    class="fixed inset-0 bg-black/50 hidden flex items-center justify-center modal-backdrop"
   >
-    <div class="bg-white w-full max-w-lg rounded-2xl shadow p-6">
+    <div class="bg-white w-full max-w-lg rounded-2xl shadow p-6 max-h-[80vh] overflow-y-auto">
       <h3 id="scheduleModalTitle" class="text-xl font-bold mb-4">Edit Schedule</h3>
 
-      <div class="grid gap-4">
-        <div>
-          <label class="block font-medium">Total Internship Hours</label>
-          <input
-            id="totalHoursInput"
-            type="number"
-            min="1"
-            step="0.5"
-            placeholder="e.g., 300"
-            class="w-full px-3 py-2 border rounded"
-          />
-          <p id="totalHoursError" class="text-sm text-red-600 mt-1 hidden"></p>
-        </div>
-
-        <div>
-          <label class="block font-medium">Start Date</label>
-          <input
-            id="startDateInput"
-            type="date"
-            class="w-full px-3 py-2 border rounded"
-          />
-          <p id="startDateError" class="text-sm text-red-600 mt-1 hidden"></p>
-        </div>
-
-        <div>
-          <label class="block font-medium">Time Mode</label>
-          <div class="flex items-center gap-4 mt-2">
-            <label class="flex items-center gap-2">
-              <input
-                type="radio"
-                name="timeMode"
-                value="hoursPerDay"
-                checked
-              />
-              <span>Start Time + Hours per Day</span>
-            </label>
-            <label class="flex items-center gap-2">
-              <input type="radio" name="timeMode" value="endTime" />
-              <span>Start Time + End Time</span>
-            </label>
-          </div>
-        </div>
-
-        <div id="hoursPerDayBlock" class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block font-medium">Start Time</label>
-            <input
-              id="startTimeHPD"
-              type="time"
-              class="w-full px-3 py-2 border rounded"
-            />
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Left Column -->
+        <div class="space-y-4">
+          <!-- Circular progress bar for Total Hours -->
+          <div class="flex items-center justify-center">
+            <div class="relative h-20 w-20">
+              <div
+                class="absolute inset-0 rounded-full border-4 border-gray-200"
+              ></div>
+              <div
+                class="absolute inset-0 rounded-full bg-blue-600"
+                style="clip-path: circle(50% at 50% 50%);"
+              ></div>
+              <div
+                class="absolute inset-2 rounded-full bg-white flex items-center justify-center"
+              >
+                <div class="text-center">
+                  <div class="text-lg font-bold text-blue-600" id="inputTotalHours">0</div>
+                  <div class="text-[10px] uppercase tracking-wide text-gray-500">
+                    hours
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
           <div>
-            <label class="block font-medium">Hours per Day</label>
+            <label class="block font-medium">Total Internship Hours</label>
             <input
-              id="hoursPerDay"
+              id="totalHoursInput"
               type="number"
-              min="0.5"
-              step="0.25"
-              placeholder="e.g., 8"
+              min="1"
+              step="0.5"
+              placeholder="e.g., 300"
               class="w-full px-3 py-2 border rounded"
             />
+            <p id="totalHoursError" class="text-sm text-red-600 mt-1 hidden"></p>
           </div>
-          <p id="hpdError" class="text-sm text-red-600 col-span-2 hidden"></p>
         </div>
 
-        <div id="endTimeBlock" class="grid grid-cols-2 gap-3 hidden">
-          <div>
-            <label class="block font-medium">Start Time</label>
-            <input
-              id="startTimeET"
-              type="time"
-              class="w-full px-3 py-2 border rounded"
-            />
-          </div>
-          <div>
-            <label class="block font-medium">End Time</label>
-            <input
-              id="endTimeET"
-              type="time"
-              class="w-full px-3 py-2 border rounded"
-            />
-          </div>
-          <p id="etError" class="text-sm text-red-600 col-span-2 hidden"></p>
-        </div>
+        <!-- Right Column -->
+        <div class="space-y-4">
+          <h4 class="text-lg font-semibold text-gray-800">Record Time Entry</h4>
 
-        <div>
-          <label class="block font-medium">Allowed Days</label>
-          <div class="grid grid-cols-4 gap-2 mt-2">
-            <label class="flex items-center gap-2"
-              ><input
-                type="checkbox"
-                class="allowedDay"
-                value="mon"
-              />Mon</label
-            >
-            <label class="flex items-center gap-2"
-              ><input
-                type="checkbox"
-                class="allowedDay"
-                value="tue"
-              />Tue</label
-            >
-            <label class="flex items-center gap-2"
-              ><input
-                type="checkbox"
-                class="allowedDay"
-                value="wed"
-              />Wed</label
-            >
-            <label class="flex items-center gap-2"
-              ><input
-                type="checkbox"
-                class="allowedDay"
-                value="thu"
-              />Thu</label
-            >
-            <label class="flex items-center gap-2"
-              ><input
-                type="checkbox"
-                class="allowedDay"
-                value="fri"
-              />Fri</label
-            >
-            <label class="flex items-center gap-2"
-              ><input
-                type="checkbox"
-                class="allowedDay"
-                value="sat"
-              />Sat</label
-            >
-            <label class="flex items-center gap-2"
-              ><input
-                type="checkbox"
-                class="allowedDay"
-                value="sun"
-              />Sun</label
-            >
+          <div>
+            <label class="block font-medium">Date</label>
+            <input
+              id="startDateInput"
+              type="date"
+              class="w-full px-3 py-2 border rounded"
+            />
+            <p id="startDateError" class="text-sm text-red-600 mt-1 hidden"></p>
           </div>
-          <p id="daysError" class="text-sm text-red-600 mt-1 hidden"></p>
+
+          <!-- Morning Shift -->
+          <div>
+            <label class="block font-medium">Morning</label>
+            <div class="grid grid-cols-2 gap-3 mt-2">
+              <div>
+                <label class="block text-sm font-medium">Time In</label>
+                <input
+                  id="morningTimeIn"
+                  type="time"
+                  class="w-full px-3 py-2 border rounded"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium">Time Out</label>
+                <input
+                  id="morningTimeOut"
+                  type="time"
+                  class="w-full px-3 py-2 border rounded"
+                />
+              </div>
+            </div>
+            <p id="morningError" class="text-sm text-red-600 mt-1 hidden"></p>
+          </div>
+
+          <!-- Afternoon Shift -->
+          <div>
+            <label class="block font-medium">Afternoon</label>
+            <div class="grid grid-cols-2 gap-3 mt-2">
+              <div>
+                <label class="block text-sm font-medium">Time In</label>
+                <input
+                  id="afternoonTimeIn"
+                  type="time"
+                  class="w-full px-3 py-2 border rounded"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium">Time Out</label>
+                <input
+                  id="afternoonTimeOut"
+                  type="time"
+                  class="w-full px-3 py-2 border rounded"
+                />
+              </div>
+            </div>
+            <p id="afternoonError" class="text-sm text-red-600 mt-1 hidden"></p>
+          </div>
+
+          <!-- Evening Shift (Optional) -->
+          <div>
+            <label class="block font-medium">Evening (Optional)</label>
+            <div class="grid grid-cols-2 gap-3 mt-2">
+              <div>
+                <label class="block text-sm font-medium">Time In</label>
+                <input
+                  id="eveningTimeIn"
+                  type="time"
+                  class="w-full px-3 py-2 border rounded"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium">Time Out</label>
+                <input
+                  id="eveningTimeOut"
+                  type="time"
+                  class="w-full px-3 py-2 border rounded"
+                />
+              </div>
+            </div>
+            <p id="eveningError" class="text-sm text-red-600 mt-1 hidden"></p>
+          </div>
+          <button
+            class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+            onclick="addTimeEntry()"
+          >
+            Add Time Entry
+          </button>
+        </div>
+      </div>
+
+      <!-- Time Entry History at the bottom -->
+      <div class="mt-6">
+        <label class="block font-medium">Time Entry History</label>
+        <div id="timeEntryHistory" class="mt-2 max-h-48 overflow-y-auto border border-gray-300 rounded p-2 bg-gray-50 text-sm text-gray-700">
+          <!-- Time entries for the specific room will be dynamically inserted here -->
+          <p class="text-gray-500">No time entries yet.</p>
         </div>
       </div>
 
@@ -418,85 +610,6 @@
         >
           Cancel
         </button>
-        <button
-          class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
-          onclick="computeAndReviewSchedule()"
-        >
-          Next
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Modal 2: Review -->
-  <div
-    id="scheduleReviewModal"
-    class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center"
-  >
-    <div class="bg-white w-full max-w-lg rounded-2xl shadow p-6">
-      <h3 class="text-xl font-bold mb-4">Review Schedule</h3>
-
-      <div class="grid gap-3 text-sm">
-        <div>
-          <span class="font-semibold">Start Date:</span>
-          <span id="revStartDate">—</span>
-        </div>
-        <div>
-          <span class="font-semibold">End Date:</span>
-          <span id="revEndDate">—</span>
-        </div>
-        <div>
-          <span class="font-semibold">Allowed Days:</span>
-          <span id="revDays">—</span>
-        </div>
-        <div>
-          <span class="font-semibold">Daily Time:</span>
-          <span id="revDailyTime">—</span>
-        </div>
-        <div>
-          <span class="font-semibold">Last Day Time Schedule:</span>
-          <span id="revLastDayTime"></span>
-        </div>
-        <div id="revLastDayNote" class="text-xs text-gray-600"></div>
-      </div>
-
-      <!-- Circular progress chip -->
-      <div class="mt-6 flex items-center justify-center">
-        <div class="relative h-28 w-28">
-          <!-- 100% ring (we just show the number cleanly) -->
-          <div
-            class="absolute inset-0 rounded-full"
-            style="
-              background: conic-gradient(currentColor 100%, #e5e7eb 0);
-              color: rgb(37, 99, 235);
-            "
-          ></div>
-          <div
-            class="absolute inset-2 rounded-full bg-white flex items-center justify-center"
-          >
-            <div class="text-center">
-              <div class="text-lg font-bold" id="revTotalHours">0</div>
-              <div class="text-[11px] uppercase tracking-wide text-gray-500">
-                hours
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="flex justify-end gap-2 mt-6">
-        <button
-          class="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300"
-          onclick="backToInput()"
-        >
-          Back
-        </button>
-        <button
-          class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
-          onclick="closeScheduleReviewModal(); saveSchedule();"
-        >
-          Done
-        </button>
       </div>
     </div>
   </div>
@@ -504,7 +617,7 @@
   <!-- Modal 3: Edit Intern Schedule -->
   <div
     id="editInternScheduleModal"
-    class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center"
+    class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center modal-backdrop"
   >
     <div class="bg-white w-full max-w-lg rounded-2xl shadow p-6">
       <h3 class="text-xl font-bold mb-4">Edit Intern Schedule</h3>
@@ -666,6 +779,139 @@
           Update Schedule
         </button>
       </div>
+    </div>
+  </div>
+
+  <!-- Modal 4: Create Room -->
+  <div
+    id="createRoomModal"
+    class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center modal-backdrop"
+  >
+    <div class="bg-white w-full max-w-lg rounded-2xl shadow p-6">
+      <h3 class="text-xl font-bold mb-4">🏠 Create Room</h3>
+
+      <div class="grid gap-4">
+        <div>
+          <label class="block font-medium">Room Name</label>
+          <input
+            id="roomName"
+            type="text"
+            placeholder="Enter Room Name"
+            class="w-full px-3 py-2 border rounded"
+          />
+        </div>
+
+        <div>
+          <p class="text-gray-600 text-sm">
+            Create a dedicated room for your interns. A unique join code will be generated.
+          </p>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 mt-6">
+        <button
+          class="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300"
+          onclick="closeCreateRoomModal()"
+        >
+          Cancel
+        </button>
+        <button
+          class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+          onclick="createRoom(); closeCreateRoomModal();"
+        >
+          ➕ Create Room
+        </button>
+      </div>
+
+      <p id="roomStatus" class="text-sm mt-3 text-green-600"></p>
+    </div>
+  </div>
+
+  <!-- Modal 5: Create Task -->
+  <div
+    id="createTaskModal"
+    class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center modal-backdrop"
+  >
+    <div class="bg-white w-full max-w-lg rounded-2xl shadow p-6 max-h-[80vh] overflow-y-auto">
+      <h3 class="text-xl font-bold mb-4">📝 Create New Task</h3>
+
+      <div class="space-y-4">
+        <div>
+          <label class="block font-medium mb-2">Task Title</label>
+          <input
+            id="taskTitle"
+            type="text"
+            placeholder="Enter task title"
+            class="w-full px-3 py-2 border rounded"
+            required
+          />
+        </div>
+
+        <div>
+          <label class="block font-medium mb-2">Description</label>
+          <textarea
+            id="taskDescription"
+            placeholder="Enter task description"
+            rows="4"
+            class="w-full px-3 py-2 border rounded"
+            required
+          ></textarea>
+        </div>
+
+        <div>
+          <label class="block font-medium mb-2">Due Date</label>
+          <input
+            id="taskDueDate"
+            type="date"
+            class="w-full px-3 py-2 border rounded"
+          />
+          <div class="mt-2">
+            <label class="flex items-center">
+              <input type="checkbox" id="noDueDate" class="mr-2" onchange="toggleDueDate()" />
+              No due date
+            </label>
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-medium mb-2">Assign to Room</label>
+          <select
+            id="taskRoom"
+            class="w-full px-3 py-2 border rounded"
+            required
+          >
+            <option value="">Select a room</option>
+            <!-- Rooms will be populated dynamically -->
+          </select>
+        </div>
+
+        <div>
+          <label class="block font-medium mb-2">Upload File (Optional)</label>
+          <input
+            id="taskFile"
+            type="file"
+            class="w-full px-3 py-2 border rounded"
+          />
+          <p class="text-sm text-gray-600 mt-1">Upload supporting documents or files for the task.</p>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 mt-6">
+        <button
+          class="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300"
+          onclick="closeCreateTaskModal()"
+        >
+          Cancel
+        </button>
+        <button
+          class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+          onclick="createTask()"
+        >
+          Create Task
+        </button>
+      </div>
+
+      <p id="taskStatus" class="text-sm mt-3 text-green-600 hidden"></p>
     </div>
   </div>
 

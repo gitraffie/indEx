@@ -15,7 +15,6 @@ const db = firebase.firestore();
 
 // Global variables
 let isRegisterMode = false;
-let confirmationShown = false;
 let globalType = "unified";
 let selectedRoomCode = null;
 let schedules = [];
@@ -23,6 +22,8 @@ let currentDailyPage = 1;
 const dailyRowsPerPage = 7;
 let selectedScheduleIndex = null;
 let coordinatorCode = "";
+let accumulatedHours = 0;
+let timeEntries = [];
 
 // Constants
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -88,6 +89,19 @@ document.addEventListener('DOMContentLoaded', function() {
     if (nextDailyPageBtn) {
         nextDailyPageBtn.addEventListener("click", nextDailyPage);
     }
+
+    // Update progress bar for total hours input
+    const totalHoursInput = document.getElementById("totalHoursInput");
+    if (totalHoursInput) {
+        totalHoursInput.addEventListener("input", function() {
+            const value = this.value || 0;
+            document.getElementById("inputTotalHours").textContent = value;
+        });
+    }
+
+    // Navigation event listeners
+    document.getElementById('dashboard-nav').addEventListener('click', () => showSection('dashboard'));
+    document.getElementById('tasks-nav').addEventListener('click', () => showSection('tasks'));
 });
 
 // Authentication State Change
@@ -104,18 +118,25 @@ window.onload = () => {
                 location.reload();
                 return;
             }
+            const data = snapshot.docs[0].data();
+            coordinatorCode = data.code;
+            document.getElementById("username").textContent = data.fullName || "Coordinator";
+            document.getElementById("userEmail").textContent = user.email;
             document.getElementById("authModal").classList.add("hidden");
             document.getElementById("dashboard").classList.add("hidden");
             document.getElementById("loggedInEmail").textContent = user.email;
 
             // Show confirmation modal only if not already shown
-            if (!confirmationShown) {
+            if (sessionStorage.getItem("justLoggedIn")) {
+                document.getElementById("sidebar").classList.add("hidden");
                 document.getElementById("confirmModal").style.display = "flex";
-                confirmationShown = true;
+                sessionStorage.setItem("justLoggedIn", "false");
             } else {
+                document.getElementById("sidebar").classList.remove("hidden");
                 proceedToDashboard();
             }
         } else {
+            document.getElementById("sidebar").classList.add("hidden");
             document.getElementById("authModal").classList.remove("hidden");
             document.getElementById("dashboard").classList.add("hidden");
             document.getElementById("confirmModal").style.display = "none";
@@ -125,7 +146,7 @@ window.onload = () => {
 
 // Authentication Functions
 // Converted authAction to async function to allow await usage
-async function authAction() {
+async function login() {
     const email = document.getElementById("email").value;
     const password = document.getElementById("password").value;
     const fullName = document.getElementById("fullName").value;
@@ -164,6 +185,11 @@ async function authAction() {
                 return;
             }
 
+            const rememberMe = document.getElementById("remember").checked;
+            localStorage.setItem("rememberMe", rememberMe);
+
+            sessionStorage.setItem("justLoggedIn", "true");
+
             const doc = await db.collection("coordinators").doc(cred.user.uid).get();
             if (doc.exists) {
                 const data = doc.data();
@@ -190,8 +216,8 @@ function toggleAuthMode() {
         ? "Coordinator Registration"
         : "Coordinator Login";
     document.getElementById("authButton").textContent = isRegisterMode
-        ? "📝 Register"
-        : "🔐 Log In";
+        ? "Register"
+        : "Log In";
     document.getElementById("togglePrompt").textContent = isRegisterMode
         ? "Already have an account?"
         : "Don't have an account?";
@@ -458,9 +484,10 @@ function coordinatorLogout() {
 }
 
 function proceedToDashboard() {
+    document.getElementById("sidebar").classList.remove("hidden");
     document.getElementById("authModal").classList.add("hidden");
-    document.getElementById("dashboard").classList.remove("hidden");
     document.getElementById("confirmModal").style.display = "none";
+    showSection('dashboard');
     loadInterns();
     fetchRooms();
 }
@@ -469,19 +496,14 @@ function logoutAndReset() {
     auth
         .signOut()
         .then(() => {
-            confirmationShown = false; // Reset the flag
+            sessionStorage.removeItem("justLoggedIn");
             document.getElementById("email").value = "";
             document.getElementById("password").value = "";
-            document.getElementById("fullName").value = "";
-            document.getElementById("organization").value = "";
-            document.getElementById("authStatus").textContent = "";
-            document.getElementById("authModal").classList.remove("hidden");
-            document.getElementById("dashboard").classList.add("hidden");
-            document.getElementById("confirmModal").style.display = "none";
+            location.reload();
         })
         .catch((err) => {
-            console.error("Error during logout and reset:", err);
-            alert("❌ Error processing request. Please try again.");
+            console.error("Error during logout:", err);
+            alert("❌ Error logging out. Please try again.");
         });
 }
 
@@ -794,6 +816,144 @@ function addHoursToTime(startStr, hours) {
     const hh = Math.floor(wrapped);
     const mm = Math.round((wrapped - hh) * 60);
     return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+// Manual entry functions
+function addTimeEntry() {
+    const totalHours = parseFloat(document.getElementById("totalHoursInput").value);
+    const date = document.getElementById("startDateInput").value;
+    const morningIn = document.getElementById("morningTimeIn").value;
+    const morningOut = document.getElementById("morningTimeOut").value;
+    const afternoonIn = document.getElementById("afternoonTimeIn").value;
+    const afternoonOut = document.getElementById("afternoonTimeOut").value;
+    const eveningIn = document.getElementById("eveningTimeIn").value;
+    const eveningOut = document.getElementById("eveningTimeOut").value;
+
+    // Validate date
+    if (!date) {
+        showErr("startDateError", "Select a date.");
+        return;
+    }
+
+    // Check if date already exists
+    if (timeEntries.some(e => e.date === date)) {
+        showErr("startDateError", "Date already added.");
+        return;
+    }
+
+    // Calculate hours
+    let dayHours = 0;
+    let morningHours = 0, afternoonHours = 0, eveningHours = 0;
+    if (morningIn && morningOut) {
+        morningHours = hoursBetween(morningIn, morningOut);
+        if (morningHours === null || morningHours <= 0) {
+            showErr("morningError", "Invalid morning times.");
+            return;
+        }
+        dayHours += morningHours;
+    }
+    if (afternoonIn && afternoonOut) {
+        afternoonHours = hoursBetween(afternoonIn, afternoonOut);
+        if (afternoonHours === null || afternoonHours <= 0) {
+            showErr("afternoonError", "Invalid afternoon times.");
+            return;
+        }
+        dayHours += afternoonHours;
+    }
+    if (eveningIn && eveningOut) {
+        eveningHours = hoursBetween(eveningIn, eveningOut);
+        if (eveningHours === null || eveningHours <= 0) {
+            showErr("eveningError", "Invalid evening times.");
+            return;
+        }
+        dayHours += eveningHours;
+    }
+    if (dayHours === 0) {
+        showErr("morningError", "At least one shift must be filled.");
+        return;
+    }
+
+    // Add to accumulated
+    accumulatedHours += dayHours;
+
+    // Update progress bar
+    updateProgressBar(accumulatedHours, totalHours);
+
+    // Add entry
+    timeEntries.push({
+        date,
+        morning: morningIn && morningOut ? {in: morningIn, out: morningOut} : null,
+        afternoon: afternoonIn && afternoonOut ? {in: afternoonIn, out: afternoonOut} : null,
+        evening: eveningIn && eveningOut ? {in: eveningIn, out: eveningOut} : null,
+        dayHours
+    });
+
+    // Update history
+    updateTimeEntryHistory();
+
+    // Clear inputs
+    document.getElementById("startDateInput").value = "";
+    document.getElementById("morningTimeIn").value = "";
+    document.getElementById("morningTimeOut").value = "";
+    document.getElementById("afternoonTimeIn").value = "";
+    document.getElementById("afternoonTimeOut").value = "";
+    document.getElementById("eveningTimeIn").value = "";
+    document.getElementById("eveningTimeOut").value = "";
+
+    // Clear errors
+    clearInputErrors();
+
+    // Next button removed, no action needed when total reached
+}
+
+function updateProgressBar(current, total) {
+    const percentage = Math.min((current / total) * 100, 100);
+    const progressEl = document.getElementById("inputTotalHours");
+    progressEl.textContent = current.toFixed(1);
+    // Update clip-path
+    const circleEl = document.querySelector('.relative .absolute.rounded-full.bg-blue-600');
+    if (circleEl) {
+        circleEl.style.clipPath = `circle(${percentage}% at 50% 50%)`;
+    }
+}
+
+function updateTimeEntryHistory() {
+    const historyEl = document.getElementById("timeEntryHistory");
+    let html = "";
+    timeEntries.forEach(entry => {
+        html += `<div class="mb-2 p-2 bg-white rounded border">
+            <strong>${entry.date}</strong>: ${entry.dayHours.toFixed(1)} hours
+            ${entry.morning ? `<br>Morning: ${entry.morning.in} - ${entry.morning.out}` : ''}
+            ${entry.afternoon ? `<br>Afternoon: ${entry.afternoon.in} - ${entry.afternoon.out}` : ''}
+            ${entry.evening ? `<br>Evening: ${entry.evening.in} - ${entry.evening.out}` : ''}
+        </div>`;
+    });
+    if (!html) html = "<p class='text-gray-500'>No time entries yet.</p>";
+    historyEl.innerHTML = html;
+}
+
+function reviewManualSchedule() {
+    const totalHours = parseFloat(document.getElementById("totalHoursInput").value);
+    if (accumulatedHours < totalHours) {
+        alert("Total hours not reached yet.");
+        return;
+    }
+
+    // Populate review modal with manual entries
+    const startDate = timeEntries.length > 0 ? timeEntries[0].date : "";
+    const endDate = timeEntries.length > 0 ? timeEntries[timeEntries.length - 1].date : "";
+    document.getElementById("revStartDate").textContent = startDate;
+    document.getElementById("revEndDate").textContent = endDate;
+    document.getElementById("revDays").textContent = "Manual";
+    document.getElementById("revDailyTime").textContent = "Varies";
+    document.getElementById("revTotalHours").textContent = accumulatedHours.toFixed(1);
+    document.getElementById("revLastDayNote").textContent = "";
+
+    // Show Review modal
+    closeScheduleInputModal();
+    const rev = document.getElementById("scheduleReviewModal");
+    rev.classList.remove("hidden");
+    rev.classList.add("flex");
 }
 
 // ======= Core compute flow =======
@@ -1230,16 +1390,38 @@ function openScheduleModal() {
     return;
   }
 
+  // Reset manual entry variables
+  accumulatedHours = 0;
+  timeEntries = [];
+  updateProgressBar(0, parseFloat(document.getElementById("totalHoursInput").value) || 0);
+  updateTimeEntryHistory();
+
+  // Next button removed, modal only for input
+
   // Open existing schedule creation modal
   document.getElementById("scheduleInputModal").classList.remove("hidden");
 
   // Optionally update modal title to reflect room name
-  document.getElementById("scheduleModalTitle").textContent = 
+  document.getElementById("scheduleModalTitle").textContent =
       `Create Schedule for Room: ${selectedRoomCode}`;
 }
 
 function closeRoomModal() {
     document.getElementById("roomModal").classList.add("hidden");
+}
+
+// ======= Modal 4: Create Room open/close =======
+function openCreateRoomModal() {
+    document.getElementById("createRoomModal").classList.remove("hidden");
+    document.getElementById("createRoomModal").classList.add("flex");
+}
+
+function closeCreateRoomModal() {
+    document.getElementById("createRoomModal").classList.add("hidden");
+    document.getElementById("createRoomModal").classList.remove("flex");
+    // Clear input and status
+    document.getElementById("roomName").value = "";
+    document.getElementById("roomStatus").textContent = "";
 }
 
 function renderSchedulePage() {
@@ -1262,12 +1444,12 @@ function renderSchedulePage() {
         dateRow.className = "flex gap-2 mb-2";
 
         const startCard = document.createElement("div");
-        startCard.className = "bg-white rounded-lg shadow p-4 flex-1";
-        startCard.innerHTML = `<span class="font-semibold">Start Date:</span> ${schedule.startDate}`;
+        //startCard.className = "bg-white rounded-lg shadow p-4 flex-1";
+        //startCard.innerHTML = `<span class="font-semibold">Start Date:</span> ${schedule.startDate}`;
 
         const endCard = document.createElement("div");
-        endCard.className = "bg-white rounded-lg shadow p-4 flex-1";
-        endCard.innerHTML = `<span class="font-semibold">End Date:</span> ${schedule.endDate}`;
+        //endCard.className = "bg-white rounded-lg shadow p-4 flex-1";
+        //endCard.innerHTML = `<span class="font-semibold">End Date:</span> ${schedule.endDate}`;
 
         dateRow.appendChild(startCard);
         dateRow.appendChild(endCard);
@@ -1277,12 +1459,12 @@ function renderSchedulePage() {
         infoRow.className = "flex gap-2 mb-2";
 
         const hoursCard = document.createElement("div");
-        hoursCard.className = "bg-white rounded-lg shadow p-4 flex-1";
-        hoursCard.innerHTML = `<span class="font-semibold">Total Hours:</span> ${schedule.totalHours}`;
+        //hoursCard.className = "bg-white rounded-lg shadow p-4 flex-1";
+        //hoursCard.innerHTML = `<span class="font-semibold">Total Hours:</span> ${schedule.totalHours}`;
 
         const daysCard = document.createElement("div");
-        daysCard.className = "bg-white rounded-lg shadow p-4 flex-1";
-        daysCard.innerHTML = `<span class="font-semibold">Allowed Days:</span> ${schedule.allowedDays.join(", ")}`;
+        //daysCard.className = "bg-white rounded-lg shadow p-4 flex-1";
+        //daysCard.innerHTML = `<span class="font-semibold">Allowed Days:</span> ${schedule.allowedDays.join(", ")}`;
 
         infoRow.appendChild(hoursCard);
         infoRow.appendChild(daysCard);
@@ -1377,5 +1559,147 @@ function nextDailyPage() {
     if (currentDailyPage < totalPages) {
         currentDailyPage++;
         renderDailyTimesPage();
+    }
+}
+
+// Navigation Functions
+function showSection(sectionId) {
+    // Hide all sections
+    ['dashboard', 'tasks'].forEach(id => {
+        document.getElementById(id).classList.add('hidden');
+    });
+    // Show the selected section
+    document.getElementById(sectionId).classList.remove('hidden');
+    // Update nav active class
+    ['dashboard-nav', 'time-nav', 'tasks-nav', 'reports-nav', 'settings-nav'].forEach(nav => {
+        document.getElementById(nav).classList.remove('active');
+    });
+    document.getElementById(sectionId + '-nav').classList.add('active');
+    // Load data if needed
+    if (sectionId === 'tasks') {
+        loadTasks();
+    }
+}
+
+// Tasks Functions
+async function openCreateTaskModal() {
+    // Populate rooms
+    const select = document.getElementById('taskRoom');
+    select.innerHTML = '<option value="">Select a room</option>';
+    const coordinatorEmail = auth.currentUser?.email;
+    try {
+        const snapshot = await db.collection('rooms').where('coordinatorEmail', '==', coordinatorEmail).get();
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            select.innerHTML += `<option value="${data.joinCode}">${data.roomName}</option>`;
+        });
+    } catch (err) {
+        console.error('Error loading rooms:', err);
+    }
+    document.getElementById('createTaskModal').classList.remove('hidden');
+    document.getElementById('createTaskModal').classList.add('flex');
+}
+
+function toggleDueDate() {
+    const checkbox = document.getElementById('noDueDate');
+    const dateInput = document.getElementById('taskDueDate');
+    dateInput.disabled = checkbox.checked;
+    if (checkbox.checked) {
+        dateInput.value = '';
+    }
+}
+
+function closeCreateTaskModal() {
+    document.getElementById('createTaskModal').classList.add('hidden');
+    document.getElementById('createTaskModal').classList.remove('flex');
+    // Clear fields
+    document.getElementById('taskTitle').value = '';
+    document.getElementById('taskDescription').value = '';
+    document.getElementById('taskDueDate').value = '';
+    document.getElementById('noDueDate').checked = false;
+    document.getElementById('taskDueDate').disabled = false;
+    document.getElementById('taskRoom').value = '';
+    document.getElementById('taskFile').value = '';
+    document.getElementById('taskStatus').textContent = '';
+    document.getElementById('taskStatus').classList.add('hidden');
+}
+
+async function createTask() {
+    const title = document.getElementById('taskTitle').value.trim();
+    const description = document.getElementById('taskDescription').value.trim();
+    const dueDate = document.getElementById('taskDueDate').value;
+    const noDueDate = document.getElementById('noDueDate').checked;
+    const room = document.getElementById('taskRoom').value;
+    const file = document.getElementById('taskFile').files[0];
+    const statusEl = document.getElementById('taskStatus');
+    statusEl.classList.add('hidden');
+    if (!title || !description || (!dueDate && !noDueDate) || !room) {
+        statusEl.textContent = '❌ All fields are required.';
+        statusEl.classList.remove('hidden');
+        return;
+    }
+    try {
+        let fileUrl = null;
+        if (file) {
+            const storageRef = firebase.storage().ref();
+            const fileRef = storageRef.child(`tasks/${Date.now()}_${file.name}`);
+            await fileRef.put(file);
+            fileUrl = await fileRef.getDownloadURL();
+        }
+        await db.collection('tasks').add({
+            title,
+            description,
+            dueDate: noDueDate ? null : dueDate,
+            roomCode: room,
+            coordinatorEmail: auth.currentUser.email,
+            fileUrl,
+            createdAt: new Date()
+        });
+        statusEl.textContent = '✅ Task created successfully!';
+        statusEl.classList.remove('hidden');
+        closeCreateTaskModal();
+        loadTasks();
+    } catch (err) {
+        statusEl.textContent = '❌ Error creating task: ' + err.message;
+        statusEl.classList.remove('hidden');
+    }
+}
+
+async function loadTasks() {
+    const list = document.getElementById('tasksList');
+    list.innerHTML = '<p class="text-gray-500">Loading tasks...</p>';
+    const coordinatorEmail = auth.currentUser?.email;
+    try {
+        // Get rooms
+        const roomsSnapshot = await db.collection('rooms').where('coordinatorEmail', '==', coordinatorEmail).get();
+        const roomCodes = roomsSnapshot.docs.map(doc => doc.data().joinCode);
+        if (roomCodes.length === 0) {
+            list.innerHTML = '<p class="text-gray-500">No rooms found.</p>';
+            return;
+        }
+        // Get tasks for these rooms
+        const tasksSnapshot = await db.collection('tasks').where('roomCode', 'in', roomCodes).orderBy('createdAt', 'desc').get();
+        if (tasksSnapshot.empty) {
+            list.innerHTML = '<p class="text-gray-500">No tasks found.</p>';
+            return;
+        }
+        let html = '';
+        tasksSnapshot.forEach(doc => {
+            const data = doc.data();
+            const fileLink = data.fileUrl ? `<a href="${data.fileUrl}" target="_blank" class="text-blue-600 hover:underline">Download File</a>` : 'No file';
+            const dueDateText = data.dueDate ? new Date(data.dueDate).toLocaleDateString() : 'No due date';
+            html += `
+                <div class="bg-white p-4 rounded-lg shadow border">
+                    <h3 class="text-lg font-semibold">${data.title}</h3>
+                    <p class="text-gray-600 mt-2">${data.description}</p>
+                    <p class="text-sm text-gray-500 mt-2">Due: ${dueDateText}</p>
+                    <p class="text-sm text-gray-500">Room: ${data.roomCode}</p>
+                    <p class="text-sm mt-2">${fileLink}</p>
+                </div>
+            `;
+        });
+        list.innerHTML = html;
+    } catch (err) {
+        list.innerHTML = '<p class="text-red-600">Error loading tasks: ' + err.message + '</p>';
     }
 }

@@ -1664,8 +1664,8 @@ async function fetchJoinedRooms() {
               </div>
             </div>
           </div>
-          <p class="text-xs text-gray-300">Code: ${roomCodeDisplay}</p>
-          <p class="text-xs text-gray-300 mt-2">${roomDescription}</p>
+          <p class="text-xs" style="color: #DBDBDB;">Code: ${roomCodeDisplay}</p>
+          <p class="text-xs mt-2" style="color: #DBDBDB;">${roomDescription}</p>
         `;
         //<p class="text-sm text-gray-600 mb-2">${roomDescription}</p>
         //<p class="text-xs text-gray-400 mt-2">${room.supervisorEmail ? 'Supervisor/Principal' : 'Coordinator/Instructor'}</p>

@@ -4,8 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>INDEX: Intern</title>
+    <meta name="description" content="Intern dashboard for time tracking, task management, and geofencing.">
+    <meta name="theme-color" content="#4174b8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="INDEX Intern">
+    <link rel="manifest" href="../../manifest.json">
+    <link rel="apple-touch-icon" href="../../images/Rmainlogo.webp">
+    <link rel="icon" type="image/x-icon" href="../../images/icon.ico">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="../../css/tailwind.css">
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -22,7 +30,7 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/flowbite/1.4.0/flowbite.min.css"
     />
-    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="../../css/main.css">
     <link rel="icon" type="image/x-icon" href="../../images/icon.ico">
 
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -189,6 +197,14 @@
         margin-right: 8px;
         font-size: 12px;
       }
+
+      /* Truncate username and email with ellipsis */
+      #username, #userEmail {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 12ch;
+      }
     </style>
   </head>
   <body class="bg-gray-100 text-gray-800">
@@ -197,10 +213,17 @@
         id="loadingScreen"
         class="fixed inset-0 bg-white flex items-center justify-center z-50 transition-opacity duration-300 opacity-100"
     >
+      <div class="h-screen flex flex-col items-center gap-3 justify-center">
+        <img
+          src="../../images/mainlogo.webp"
+          alt="Main Logo"
+          class="h-20 w-auto"
+        />
         <div
-            class="animate-spin rounded-full h-16 w-16 border-t-4"
-            style="border: 4px dashed #4174b8; border-bottom-color: #4175b8; border-left-color: #4175b8; border-right-color: #4175b859;"
+          class="animate-spin rounded-full h-16 w-16 border-t-4 mt-2"
+          style="border: 4px dashed #4174b8; border-bottom-color: #4175b8; border-left-color: #4175b8; border-right-color: #4175b859;"
         ></div>
+      </div>
     </div>
 
     <!-- Confirm Login Modal -->
@@ -278,18 +301,6 @@
             id="school"
             type="text"
             placeholder="School Name"
-            class="w-full px-3 py-2 border rounded mb-3 rounded-3xl"
-          />
-          <input
-            id="supervisorEmail"
-            type="email"
-            placeholder="Supervisor Email"
-            class="w-full px-3 py-2 border rounded mb-3 rounded-3xl"
-          />
-          <input
-            id="coordinatorCodeInput"
-            type="text"
-            placeholder="Coordinator Code"
             class="w-full px-3 py-2 border rounded mb-3 rounded-3xl"
           />
         </div>
@@ -449,73 +460,7 @@
       </div>
     </div>
 
-    <!-- Task Details Modal -->
-    <div
-      id="taskModal"
-      style="display: none"
-      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-    >
-      <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-lg modal-content fade-out">
-        <div class="flex justify-between items-center mb-6">
-          <h2 class="text-xl font-bold" style="color: #4174b8;">Task Details</h2>
-          <button
-            onclick="closeTaskModal()"
-            class="text-gray-500 hover:text-gray-700 text-lg"
-          >
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
 
-        <div id="taskDetails" class="space-y-4">
-          <div>
-            <h3 class="text-lg font-semibold text-gray-800" id="taskTitle">Task Title</h3>
-            <p class="text-sm text-gray-600" id="taskDescription">Task description will appear here...</p>
-          </div>
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <span class="text-sm font-medium text-gray-700">Priority:</span>
-              <span class="text-sm text-gray-600 ml-2" id="taskPriority">High</span>
-            </div>
-            <div>
-              <span class="text-sm font-medium text-gray-700">Due Date:</span>
-              <span class="text-sm text-gray-600 ml-2" id="taskDueDate">2024-01-15</span>
-            </div>
-            <div>
-              <span class="text-sm font-medium text-gray-700">Status:</span>
-              <span class="text-sm text-gray-600 ml-2" id="taskStatus">In Progress</span>
-            </div>
-            <div>
-              <span class="text-sm font-medium text-gray-700">Assigned By:</span>
-              <span class="text-sm text-gray-600 ml-2" id="taskAssignedBy">Coordinator</span>
-            </div>
-          </div>
-          <div>
-            <span class="text-sm font-medium text-gray-700">Progress:</span>
-            <div class="mt-2">
-              <div class="w-full bg-gray-200 rounded-full h-2">
-                <div class="bg-blue-600 h-2 rounded-full" id="taskProgressBar" style="width: 50%"></div>
-              </div>
-              <span class="text-xs text-gray-600 mt-1" id="taskProgressText">50% Complete</span>
-            </div>
-          </div>
-          <div class="flex justify-end gap-3">
-            <button
-              onclick="closeTaskModal()"
-              class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition"
-            >
-              Close
-            </button>
-            <button
-              onclick="markTaskComplete()"
-              class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center gap-2"
-            >
-              <i class="fas fa-check"></i>
-              Mark Complete
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <!-- Map Modal -->
     <div
@@ -582,7 +527,7 @@
           >
             <img
               id="userPic"
-              src="../../images/default.webp"
+              src="/images/default.webp"
               alt="User Profile"
               class="w-full h-full rounded-full object-cover"
             />
@@ -815,13 +760,127 @@
     </div> 
 
     <div class="lg:ml-64 min-h-screen p-4" name="form3">
-      <div class="bg-white shadow rounded-lg p-6 mb-6">
-        <h2 class="text-lg font-semibold mb-4">
-          📚 Tasks from Your Coordinator
+      <div class="bg-white shadow rounded-lg p-6 mb-6 min-w-screen md:min-w-[50px]">
+        <h2 class="text-lg font-bold mb-4">
+          Tasks
         </h2>
-        <ul id="taskList" class="space-y-4">
-          <li class="text-gray-500">Loading tasks...</li>
-        </ul>
+        <select id="taskFilter" class="mb-4 p-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all">
+          <option value="all">All Rooms</option>
+        </select>
+
+        <!-- Accordion for Tasks by Due Date -->
+        <div id="taskList" class="space-y-4">
+          <!-- No Due Date -->
+          <div class="accordion-item">
+            <button class="accordion-header w-full text-left p-4 bg-gray-100 hover:bg-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+              <h3 class="text-lg font-semibold">No Due Date</h3>
+            </button>
+            <div class="accordion-content hidden p-4 bg-white border border-gray-200 rounded-b-lg">
+              <div id="noDueDateTasks" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="text-gray-500">No tasks without due date.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- This Week -->
+          <div class="accordion-item">
+            <button class="accordion-header w-full text-left p-4 bg-gray-100 hover:bg-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+              <h3 class="text-lg font-semibold">This Week</h3>
+            </button>
+            <div class="accordion-content hidden p-4 bg-white border border-gray-200 rounded-b-lg">
+              <div id="thisWeekTasks" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="text-gray-500">No tasks due this week.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Next Week -->
+          <div class="accordion-item">
+            <button class="accordion-header w-full text-left p-4 bg-gray-100 hover:bg-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+              <h3 class="text-lg font-semibold">Next Week</h3>
+            </button>
+            <div class="accordion-content hidden p-4 bg-white border border-gray-200 rounded-b-lg">
+              <div id="nextWeekTasks" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="text-gray-500">No tasks due next week.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Later -->
+          <div class="accordion-item">
+            <button class="accordion-header w-full text-left p-4 bg-gray-100 hover:bg-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+              <h3 class="text-lg font-semibold">Later</h3>
+            </button>
+            <div class="accordion-content hidden p-4 bg-white border border-gray-200 rounded-b-lg">
+              <div id="laterTasks" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="text-gray-500">No tasks due later.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Task Details Section -->
+        <div id="taskDetailsSection" class="hidden mt-6 p-6 bg-white border border-gray-200 rounded-lg">
+          <div class="flex justify-between items-center mb-6">
+            <h2 class="text-xl font-bold" style="color: #4174b8;">Task Details</h2>
+            <button onclick="backToTasks()" class="text-gray-500 hover:text-gray-700 text-lg">
+              <i class="fas fa-reply"></i>
+            </button>
+          </div>
+          <div id="taskDetailsContent" class="space-y-4">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div class="bg-gray-50 p-4 rounded-lg">
+                <h3 id="taskTitle" class="text-xl font-bold text-gray-800 mb-2"></h3>
+                <p id="taskDescription" class="text-gray-600 mb-4"></p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <p><strong>Due Date:</strong> <span id="taskDueDate" class="text-gray-700"></span></p>
+                  <p><strong>Status:</strong> <span id="taskStatus" class="text-gray-700"></span></p>
+                  <p><strong>Assigned by:</strong> <span id="taskAssignedBy" class="text-gray-700"></span></p>
+                </div>
+                <hr>
+                <div id="uploadedFiles" class="space-y-2">
+                  <!-- Uploaded files will be displayed here -->
+                </div>
+              </div>
+
+              <div class="bg-gray-50 p-4 rounded-lg">
+                <!-- Attachments Section -->
+                <h3 class="text-lg font-bold text-gray-800 mb-2">Your Work</h3>
+                <div class="space-y-2">
+                  <button id="addAttachmentBtn" onclick="toggleAttachmentInputs()" class="px-4 py-2 bg-transparent rounded-lg hover:bg-blue-50 transition flex items-center gap-2" style="border: 2px #4175b8 solid; color: #4175b8; width: 200px;">
+                    <i class="fas fa-plus"></i>
+                    Add Attachment
+                  </button>
+                  <button id="markAsDoneBtn" onclick="toggleAttachmentInputs()" class="px-4 py-2 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-2" style="background-color: #4175b8; width: 200px;">
+                    <i class="fas fa-check"></i>
+                    Mark as done
+                  </button>
+                  <div id="attachmentInputs" class="hidden space-y-2">
+                    <input type="file" id="taskFileUpload" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all" />
+                    <input type="url" id="taskLink" placeholder="Enter a link" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all" />
+                  </div>
+                </div>
+                <div id="taskAttachments" class="mt-4 space-y-2">
+                  <!-- Attachments will be listed here -->
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Comments Section -->
+          <div class="mt-6 shadow p-4 rounded">
+            <h3 class="text-lg font-semibold mb-4">Comments</h3>
+            <div id="taskComments" class="space-y-2">
+              <!-- Comments will be loaded here -->
+            </div>
+            <div class="mt-4">
+              <textarea id="newComment" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent transition-all" placeholder="Add a comment..."></textarea>
+              <button id="addCommentBtn" class="mt-2 px-4 py-2 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-2" style="background-color: #4175b8;">
+                <i class="fas fa-paper-plane"></i>
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1036,10 +1095,15 @@
               const formName = event.target.closest('a').getAttribute('href').substring(1); // Get form name from href
               showForm(formName); // Show the selected form
 
-              // Load room progress when navigating to form2 (Room Progress Tracking)
-              if (formName === 'form2') {
-                  loadRoomProgress();
-              }
+        // Load room progress when navigating to form2 (Room Progress Tracking)
+        if (formName === 'form2') {
+            loadRoomProgress();
+        }
+
+        // Load tasks when navigating to form3 (Tasks)
+        if (formName === 'form3') {
+            loadTasks();
+        }
           });
       });
     </script>

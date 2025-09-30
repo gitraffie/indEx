@@ -81,18 +81,18 @@ function login() {
     const authStatus = document.getElementById("authStatus");
 
     if (isRegisterMode) {
-        auth
-            .createUserWithEmailAndPassword(email, password)
-            .then((cred) => {
-                return cred.user.sendEmailVerification().then(() => {
-                    return db.collection("supervisors").add({
-                        email,
-                        fullName,
-                        company,
-                        createdAt: new Date(),
-                    });
-                });
-            })
+  auth
+    .createUserWithEmailAndPassword(email, password)
+    .then((cred) => {
+        return cred.user.sendEmailVerification().then(() => {
+            return db.collection("supervisors").doc(cred.user.uid).set({
+                email,
+                fullName,
+                company,
+                createdAt: new Date(),
+            });
+        });
+    })
             .then(() => {
                 authStatus.textContent =
                     "✅ Verification email sent. Please verify before logging in.";
@@ -642,7 +642,3 @@ async function fetchRoomInterns(roomCode) {
         internList.innerHTML = `<li class='text-red-500'>Error: ${err.message}</li>`;
     }
 }
-
-
-
-
