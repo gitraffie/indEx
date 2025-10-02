@@ -42,11 +42,15 @@ class SupervisorZoneManager {
             const button = document.querySelector('#supervisorZoneInput button');
             if (supervisorRoomCode) {
                 // Fetch geofence data and set global variables
-                const geoSnap = await this.db.collection("geofences").doc(supervisorRoomCode).get();
-                if (geoSnap.exists) {
-                    const geofenceData = geoSnap.data();
-                    this.geofenceCenter = [geofenceData.center.lat, geofenceData.center.lng];
-                    this.geofenceRadius = geofenceData.radius || 100;
+                const roomSnap = await this.db.collection("rooms").where("joinCode", "==", supervisorRoomCode).limit(1).get();
+                if (!roomSnap.empty) {
+                    const roomId = roomSnap.docs[0].id;
+                    const geoSnap = await this.db.collection("rooms").doc(roomId).collection("geofences").limit(1).get();
+                    if (!geoSnap.empty) {
+                        const geofenceData = geoSnap.docs[0].data();
+                        this.geofenceCenter = [geofenceData.center.lat, geofenceData.center.lng];
+                        this.geofenceRadius = geofenceData.radius || 100;
+                    }
                 }
 
                 // Hide input and button, show connected message with disconnect button
@@ -135,8 +139,9 @@ class SupervisorZoneManager {
             });
 
             // Check if geofence exists for this room
-            const geofenceSnap = await this.db.collection("geofences").doc(roomCode).get();
-            if (!geofenceSnap.exists) {
+            const roomId = roomSnap.docs[0].id;
+            const geofenceSnap = await this.db.collection("rooms").doc(roomId).collection("geofences").limit(1).get();
+            if (geofenceSnap.empty) {
                 setZoneStatus.textContent = 'No geofence found for this supervisor room.';
                 setZoneStatus.style.color = 'red';
                 // Hide spinner and enable button
@@ -146,7 +151,7 @@ class SupervisorZoneManager {
                 return;
             }
 
-            const geofenceData = geofenceSnap.data();
+            const geofenceData = geofenceSnap.docs[0].data();
 
             // Check if intern_data document already exists for this intern and room
             const existingInternDataSnap = await this.db.collection("intern_data")

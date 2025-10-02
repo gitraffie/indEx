@@ -1,17 +1,37 @@
+console.log("🔥 [INIT] Starting Firebase initialization...");
 const firebaseConfig = {
     apiKey: "AIzaSyDaCCFqs7cwKMiicnlP2Ig3s-WHw8gyZts",
     authDomain: "index-database-d00f9.firebaseapp.com",
     projectId: "index-database-d00f9",
-    storageBucket: "index-database-d00f9.firebasestorage.app",
+    storageBucket: "index-database-d00f9.appspot.com",
     messagingSenderId: "310780304431",
     appId: "1:310780304431:web:18c2fdd5ab6405e80dfada",
 };
-firebase.initializeApp(firebaseConfig);
+
+try {
+    firebase.initializeApp(firebaseConfig);
+    console.log("✅ [INIT] Firebase app initialized successfully");
+} catch (error) {
+    console.error("❌ [INIT] Firebase initialization failed:", error);
+    alert("Application initialization error. Please refresh the page.");
+}
+
 const auth = firebase.auth();
 const db = firebase.firestore();
 
+console.log("🔐 [INIT] Setting up Firebase Auth persistence...");
+try {
+    auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+    console.log("✅ [INIT] Auth persistence set to LOCAL");
+} catch (error) {
+    console.error("❌ [INIT] Failed to set auth persistence:", error);
+}
+
+// AuthManager removed to avoid conflicts with existing authentication code
+console.log("👤 [INIT] Skipping AuthManager initialization - using existing auth code");
+
+let userData = null;
 let isRegisterMode = false;
-let currentIntern = null;
 let geofenceCenter = null;
 let geofenceRadius = 100;
 let justLoggedIn = false;
@@ -21,63 +41,8 @@ let internMarker = null;
 let geofenceCircle = null;
 let mapInitialized = false;
 let infoWindow = null;
-
-// Function to check and update supervisor zone UI
-async function checkSupervisorZoneStatus() {
-  try {
-    const internRef = db.collection("interns").doc(auth.currentUser.uid);
-    const internDoc = await internRef.get();
-    if (!internDoc.exists) return;
-    const internData = internDoc.data();
-    const joinedCodes = internData.rooms || [];
-    // Find supervisor rooms by checking "rooms" collection and if current user is in "interns" field
-    let supervisorRoomCode = null;
-    for (const roomCode of joinedCodes) {
-      const roomSnap = await db.collection("rooms").where("joinCode", "==", roomCode).limit(1).get();
-      if (!roomSnap.empty) {
-        const roomData = roomSnap.docs[0].data();
-        // Check if the room has a supervisorEmail field (indicating it's a supervisor room)
-        if (!roomData.supervisorEmail) {
-          continue; // Skip to the next room if no supervisorEmail
-        }
-        const interns = roomData.interns || [];
-        if (interns.includes(auth.currentUser.email)) {
-          supervisorRoomCode = roomCode;
-          break;
-        }
-      }
-    }
-    const inputDiv = document.getElementById('supervisorZoneInput');
-    const connectedMsg = document.getElementById('supervisorZoneConnected');
-    const input = document.getElementById('supervisorRoomCodeInput');
-    const button = document.querySelector('#supervisorZoneInput button');
-    if (supervisorRoomCode) {
-      // Hide input and button, show connected message with disconnect button
-      inputDiv.style.display = 'none';
-      connectedMsg.classList.remove('hidden');
-      connectedMsg.innerHTML = `
-        <p>Connected to supervisor zone: <strong>${supervisorRoomCode}</strong></p>
-        <div class="flex gap-2 mt-2">
-          <a href="#" onclick="toggleMapModal()" class="px-3 py-1 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition flex items-center gap-1">
-            <i class="fas fa-map"></i>
-            View Map
-          </a>
-          <button onclick="disconnectSupervisorZone()" class="px-3 py-1 bg-red-600 text-white text-xs rounded-lg hover:bg-red-700 transition flex items-center gap-1">
-            <i class="fas fa-unlink"></i>
-            Disconnect
-          </button>
-        </div>
-      `;
-    } else {
-      // Show input and button, hide connected message
-      inputDiv.style.display = 'flex';
-      connectedMsg.classList.add('hidden');
-      input.value = '';
-    }
-  } catch (error) {
-    console.error('Error checking supervisor zone status:', error);
-  }
-}
+let globalCoordinatorTotal = 0;
+let initialAuthLoad = true;
 
 function toggleAuthMode() {
     isRegisterMode = !isRegisterMode;
@@ -107,6 +72,8 @@ function toggleAuthMode() {
 }
 
 async function authAction() {
+    console.log("🔐 [AUTH] authAction called - Mode:", isRegisterMode ? "REGISTER" : "LOGIN");
+
     const emailEl = document.getElementById("email");
     const passwordEl = document.getElementById("password");
     const fullNameEl = document.getElementById("fullName");
@@ -115,83 +82,267 @@ async function authAction() {
     const statusEl = document.getElementById("authStatus");
 
     if (!emailEl || !passwordEl || !fullNameEl || !schoolEl || !rememberEl || !statusEl) {
-        console.error("Auth form elements not found");
+        console.error("❌ [AUTH] Auth form elements not found:", {
+            emailEl: !!emailEl,
+            passwordEl: !!passwordEl,
+            fullNameEl: !!fullNameEl,
+            schoolEl: !!schoolEl,
+            rememberEl: !!rememberEl,
+            statusEl: !!statusEl
+        });
         return;
     }
 
-    const email = emailEl.value;
+    const email = emailEl.value.trim();
     const password = passwordEl.value;
-    const fullName = fullNameEl.value;
-    const school = schoolEl.value;
+    const fullName = fullNameEl.value.trim();
+    const school = schoolEl.value.trim();
     const rememberMe = rememberEl.checked;
     const status = statusEl;
 
+    console.log("📝 [AUTH] Form values:", {
+        email: email.substring(0, 3) + "***", // Partial email for privacy
+        hasPassword: !!password,
+        fullName,
+        school,
+        rememberMe,
+        isRegisterMode
+    });
+
     // Store remember me preference
     localStorage.setItem("rememberMe", rememberMe);
+    console.log("💾 [AUTH] Remember me preference stored:", rememberMe);
 
     if (isRegisterMode) {
+        console.log("📝 [AUTH] Starting user registration process...");
         try {
-            const cred = await auth.createUserWithEmailAndPassword(
-                email,
-                password
-            );
-            await cred.user.sendEmailVerification();
+            console.log("🔥 [AUTH] Creating user with Firebase Auth...");
+            const cred = await auth.createUserWithEmailAndPassword(email, password);
+            console.log("✅ [AUTH] User created successfully:", cred.user.uid);
 
-            await db.collection("interns").doc(cred.user.uid).set({
+            console.log("📧 [AUTH] Sending email verification...");
+            await cred.user.sendEmailVerification();
+            console.log("✅ [AUTH] Email verification sent");
+
+            console.log("💾 [AUTH] Saving user data to Firestore...");
+            await db.collection("intern").doc(cred.user.uid).set({
                 email,
                 name: fullName,
                 school,
-                supervisorEmail: null,
-                coordinatorCode: null,
+                role: "intern",
                 createdAt: new Date(),
             });
-            status.textContent =
-                "✅ Verification email sent. Please verify before logging in.";
+            console.log("✅ [AUTH] User data saved to Firestore");
+
+            status.textContent = "✅ Verification email sent. Please verify before logging in.";
+            console.log("🎉 [AUTH] Registration completed successfully");
         } catch (err) {
+            console.error("❌ [AUTH] Registration failed:", err);
             status.textContent = "❌ " + err.message;
         }
     } else {
-        const supervisorSnapshot = await db
-            .collection("supervisors")
-            .where("email", "==", email)
-            .get();
-        if (!supervisorSnapshot.empty) {
-            status.textContent =
-                "⚠️ This account is a supervisor. Please use the supervisor login.";
-            return;
+        console.log("🔑 [AUTH] Starting login process...");
+
+        // Check if email belongs to supervisor
+        console.log("🔍 [AUTH] Checking if email belongs to supervisor...");
+        try {
+            const supervisorSnapshot = await db
+                .collection("supervisors")
+                .where("email", "==", email)
+                .get();
+            console.log("🔍 [AUTH] Supervisor check result:", !supervisorSnapshot.empty);
+
+            if (!supervisorSnapshot.empty) {
+                console.log("⚠️ [AUTH] Email belongs to supervisor account");
+                status.textContent = "⚠️ This account is a supervisor. Please use the supervisor login.";
+                return;
+            }
+        } catch (err) {
+            console.error("❌ [AUTH] Error checking supervisor collection:", err);
         }
 
+        // Check if email belongs to coordinator
+        console.log("🔍 [AUTH] Checking if email belongs to coordinator...");
+        try {
+            const coordinatorSnapshot = await db
+                .collection("coordinators")
+                .where("email", "==", email)
+                .get();
+            console.log("🔍 [AUTH] Coordinator check result:", !coordinatorSnapshot.empty);
+
+            if (!coordinatorSnapshot.empty) {
+                console.log("⚠️ [AUTH] Email belongs to coordinator account");
+                status.textContent = "⚠️ This account is a coordinator. Please use the coordinator login.";
+                return;
+            }
+        } catch (err) {
+            console.error("❌ [AUTH] Error checking coordinator collection:", err);
+        }
+
+        console.log("🔥 [AUTH] Attempting Firebase sign in...");
         auth
             .signInWithEmailAndPassword(email, password)
             .then((cred) => {
+                console.log("✅ [AUTH] Firebase sign in successful:", {
+                    uid: cred.user.uid,
+                    email: cred.user.email,
+                    emailVerified: cred.user.emailVerified
+                });
                 justLoggedIn = true;
+
                 if (!cred.user.emailVerified) {
+                    console.log("⚠️ [AUTH] Email not verified, signing out...");
                     status.textContent = "⚠️ Please verify your email first.";
                     auth.signOut();
                     return;
                 }
+
+                console.log("🎉 [AUTH] Login process completed successfully");
             })
             .catch((err) => {
+                console.error("❌ [AUTH] Firebase sign in failed:", err);
                 status.textContent = "❌ " + err.message;
-            })
-        ;
+            });
     }
 }
 
 auth.onAuthStateChanged(async (user) => {
+    console.log("🔐 [AUTH_STATE] onAuthStateChanged triggered:", {
+        hasUser: !!user,
+        initialAuthLoad,
+        timestamp: new Date().toISOString()
+    });
+
+    if (user) {
+        console.log("👤 [AUTH_STATE] User details:", {
+            uid: user.uid,
+            email: user.email,
+            emailVerified: user.emailVerified,
+            isAnonymous: user.isAnonymous,
+            providerData: user.providerData?.map(p => ({ providerId: p.providerId })),
+            metadata: {
+                creationTime: user.metadata?.creationTime,
+                lastSignInTime: user.metadata?.lastSignInTime
+            }
+        });
+    } else {
+        console.log("❌ [AUTH_STATE] No user authenticated");
+    }
+
     const modal = document.getElementById("authModal");
     const content = document.getElementById("mainContent");
     const sidebar = document.getElementById("sidebar");
 
-    if (!user || !user.emailVerified) {
+    // Handle initial load state
+    if (initialAuthLoad && !user) {
+        console.log("⏳ [AUTH_STATE] Initial auth load - showing auth modal");
+        initialAuthLoad = false;
+        modal.style.display = "flex";
+        content.style.display = "none";
+        const loading = document.getElementById("loadingScreen");
+        loading.classList.add("opacity-0");
+        setTimeout(() => (loading.style.display = "none"), 300);
+        return;
+    }
+
+    // Check authentication and email verification
+    if (!user) {
+        console.log("❌ [AUTH_STATE] No user - showing auth modal");
+        modal.style.display = "flex";
+        content.style.display = "none";
+        const loading = document.getElementById("loadingScreen");
+        loading.classList.add("opacity-0");
+        setTimeout(() => (loading.style.display = "none"), 300);
+        return;
+    }
+
+    if (!user.emailVerified) {
+        console.log("⚠️ [AUTH_STATE] Email not verified - showing auth modal");
+        modal.style.display = "flex";
+        content.style.display = "none";
+        const loading = document.getElementById("loadingScreen");
+        loading.classList.add("opacity-0");
+        setTimeout(() => (loading.style.display = "none"), 300);
+        return;
+    }
+
+    console.log("✅ [AUTH_STATE] User authenticated and email verified - proceeding with user data validation");
+
+    // Wait for Firebase to refresh token to avoid race condition
+    console.log("🔄 [AUTH_STATE] Refreshing ID token to avoid race conditions...");
+    try {
+        const token = await user.getIdToken(true);
+        console.log("✅ [AUTH_STATE] Token refreshed successfully:", {
+            tokenLength: token.length,
+            tokenPrefix: token.substring(0, 20) + "..."
+        });
+    } catch (tokenError) {
+        console.error("❌ [AUTH_STATE] Token refresh failed:", tokenError);
         modal.style.display = "flex";
         content.style.display = "none";
         return;
     }
 
-    const internDoc = await db.collection("interns").doc(user.uid).get();
-    if (!internDoc.exists) {
-        await auth.signOut();
+    // Check if user exists in intern collection
+    console.log("🔍 [AUTH_STATE] Checking user existence in intern collection...");
+    try {
+        const userDocRef = db.collection("intern").doc(user.uid);
+        console.log("🔍 [AUTH_STATE] Querying document:", userDocRef.path);
+
+        const userDoc = await userDocRef.get();
+        console.log("🔍 [AUTH_STATE] Firestore query result:", {
+            exists: userDoc.exists,
+            hasData: userDoc.exists && !!userDoc.data()
+        });
+
+        if (userDoc.exists) {
+            const docData = userDoc.data();
+            console.log("📄 [AUTH_STATE] User document data:", {
+                email: docData.email,
+                name: docData.name,
+                role: docData.role,
+                school: docData.school,
+                createdAt: docData.createdAt,
+                hasProfilePicture: !!docData.profilePicture,
+                hasPhotoURL: !!docData.photoURL
+            });
+        } else {
+            console.error("❌ [AUTH_STATE] User document not found in intern collection");
+            modal.style.display = "flex";
+            content.style.display = "none";
+            return;
+        }
+
+        userData = userDoc.data();
+        console.log("💾 [AUTH_STATE] User data loaded into memory");
+
+        // Check and fix missing role
+        if (!userData.role) {
+            console.log("🔧 [AUTH_STATE] Role missing - adding default role 'intern'");
+            try {
+                await db.collection("intern").doc(user.uid).update({ role: "intern" });
+                userData.role = "intern";
+                console.log("✅ [AUTH_STATE] Role updated successfully");
+            } catch (roleUpdateError) {
+                console.error("❌ [AUTH_STATE] Failed to update role:", roleUpdateError);
+            }
+        }
+
+        console.log("🔍 [AUTH_STATE] Validating user role:", userData.role);
+        if (userData.role !== "intern") {
+            console.error("❌ [AUTH_STATE] Invalid role - expected 'intern', got:", userData.role);
+            modal.style.display = "flex";
+            content.style.display = "none";
+            return;
+        }
+
+        console.log("✅ [AUTH_STATE] User validation completed successfully");
+    } catch (error) {
+        console.error("❌ [AUTH_STATE] Error during user validation:", {
+            error: error.message,
+            code: error.code,
+            stack: error.stack
+        });
         modal.style.display = "flex";
         content.style.display = "none";
         return;
@@ -233,11 +384,9 @@ auth.onAuthStateChanged(async (user) => {
 
     document.getElementById("loggedInEmail").textContent = user.email;
 
-    currentIntern = internDoc.data();
-
     // Update user profile in sidebar
     document.getElementById("username").textContent =
-        currentIntern.name || "Intern Name";
+        userData.name || "Intern Name";
     document.getElementById("userEmail").textContent = user.email;
 
     // Update profile picture - try multiple sources
@@ -245,10 +394,10 @@ auth.onAuthStateChanged(async (user) => {
     let profilePic = "/images/default.webp";
 
     // Try different possible profile picture sources
-    if (currentIntern.profilePicture) {
-        profilePic = currentIntern.profilePicture;
-    } else if (currentIntern.photoURL) {
-        profilePic = currentIntern.photoURL;
+    if (userData.profilePicture) {
+        profilePic = userData.profilePicture;
+    } else if (userData.photoURL) {
+        profilePic = userData.photoURL;
     } else if (user.photoURL) {
         profilePic = user.photoURL;
     }
@@ -258,176 +407,282 @@ auth.onAuthStateChanged(async (user) => {
         this.src = "/images/default.webp";
     };
 
-    loadInternData(currentIntern);
+    loadInternData(userData, user);
 
     // Initialize supervisor zone status on page load
-    checkSupervisorZoneStatus();
+    checkSupervisorZoneStatus(user);
 
-    async function loadInternData(currentIntern) {
-        let supervisorData = null;
-        try {
-            const snapshot = await db
-            .collection("supervisors")
-            .where("email", "==", currentIntern.supervisorEmail)
-            .get();
-
-            if (snapshot.empty) {
-                document.getElementById("supervisorName").textContent = "Not found";
-                document.getElementById("supervisorCompany").textContent =
-                    "Not found";
-                document.getElementById("geofenceCoords").textContent = "No data";
-            } else {
-                supervisorData = snapshot.docs[0].data();
-                document.getElementById("supervisorName").textContent =
-                    supervisorData.fullName || "Unnamed";
-                document.getElementById("supervisorCompany").textContent =
-                    supervisorData.company || "Unknown";
-            }
-
-            const geoSnap = await db
-                .collection("geofences")
-                .where("supervisorEmail", "==", currentIntern.supervisorEmail)
-                .limit(1)
-                .get();
-            if (!geoSnap.empty) {
-                const geo = geoSnap.docs[0].data();
-                if (geo.center) {
-                    geofenceCenter = [geo.center.lat, geo.center.lng];
-                    geofenceRadius = geo.radius || 100;
-                    document.getElementById(
-                        "geofenceCoords"
-                    ).textContent = `${geofenceCenter[0]}, ${geofenceCenter[1]}`;
-
-                    // Initialize the map only once
-                    setTimeout(() => {
-                        console.log("🔍 DEBUG loadInternData: Initializing map for supervisor info");
-                        const mapContainer = document.getElementById("map");
-                        console.log("🔍 DEBUG loadInternData: Map container:", mapContainer);
-                        if (!mapContainer) {
-                            console.log("🔍 DEBUG loadInternData: Map container not found, skipping map initialization");
-                            return;
-                        }
-                        console.log("🔍 DEBUG loadInternData: Map container dimensions:", mapContainer.offsetWidth, "x", mapContainer.offsetHeight);
-                        console.log("🔍 DEBUG loadInternData: Map container visibility:", window.getComputedStyle(mapContainer).display, window.getComputedStyle(mapContainer).visibility);
-
-                        if (!mapInitialized) {
-                            console.log("🔍 DEBUG loadInternData: Creating new map instance");
-                            map = L.map('map').setView([10.7502, 121.9324], 15);
-                            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-                                maxZoom: 19,
-                            }).addTo(map);
-                            mapInitialized = true;
-                            console.log("🔍 DEBUG loadInternData: Map initialized successfully");
-                        } else {
-                            console.log("🔍 DEBUG loadInternData: Map already exists, setting view to geofence center");
-                            if (map) {
-                                map.setView([geofenceCenter[0], geofenceCenter[1]], 17);
-                            }
-                        }
-
-                        // Remove previous geofence circle if exists
-                        if (geofenceCircle) {
-                            console.log("🔍 DEBUG loadInternData: Removing existing geofence circle");
-                            map.removeLayer(geofenceCircle);
-                        }
-
-                        console.log("🔍 DEBUG loadInternData: Adding geofence circle at", geofenceCenter, "with radius", geofenceRadius);
-                        geofenceCircle = L.circle(geofenceCenter, {
-                            radius: geofenceRadius,
-                            color: "red",
-                            fillColor: "#f03",
-                            fillOpacity: 0.3
-                        }).addTo(map);
-
-                        // Fit the map to the geofence bounds to showcase the whole circle
-                        map.fitBounds(geofenceCircle.getBounds());
-                    }, 300);
-                }
-            } else {
-                document.getElementById("geofenceCoords").textContent =
-                    "No geofence set";
-            }
-
-            // Load tasks for this intern's coordinator
-            try {
-                const tasksSnap = await db
-                    .collection("tasks")
-                    .where("coordinatorCode", "==", currentIntern.coordinatorCode)
-                    .orderBy("createdAt", "desc")
-                    .get();
-
-                const taskList = document.getElementById("taskList");
-                taskList.innerHTML = ""; // Clear loading message
-
-                if (tasksSnap.empty) {
-                    taskList.innerHTML =
-                        "<li class='text-gray-500'>No tasks posted yet.</li>";
-                } else {
-                    tasksSnap.forEach((doc) => {
-                        const task = doc.data();
-                        const li = document.createElement("li");
-                        li.className = "border border-gray-300 rounded p-4";
-                        li.innerHTML = `
-                            <h3 class="text-lg font-semibold text-blue-700 mb-1">${
-                                task.title
-                            }</h3>
-                            <p class="text-gray-700 mb-1">${task.description}</p>
-                            <p class="text-sm text-gray-500">Posted on: ${
-                                task.createdAt?.toDate().toLocaleString() || "Unknown date"
-                            }</p>
-                        `;
-                        taskList.appendChild(li);
-                    });
-                }
-            } catch (err) {
-                console.error("Error loading tasks:", err);
-                document.getElementById("taskList").innerHTML =
-                    "<li class='text-red-600'>❌ Failed to load tasks.</li>";
-            }
-
-        // Load supervisor's schedule for this intern
-
-        // Load total hours for progress bar (only if a room is selected)
-        const container = document.getElementById("roomScheduleContainer");
-        const activeRoom = container.dataset.activeRoom;
-        if (activeRoom) {
-            loadTotalHours();
-        }
-        loadHoursLeft();
-        refreshBtn();
-
-        modal.style.display = "none";
-
-        // ✅ At the very end of onAuthStateChanged
-        setTimeout(() => {
-            const loading = document.getElementById("loadingScreen");
-            loading.classList.add("opacity-0");
-            setTimeout(() => (loading.style.display = "none"), 300);
-        }, 100);
-
-        window.onload = () => {
-            // ✅ Fix: define loading before using it
-            const loading = document.getElementById("loadingScreen");
-            setTimeout(() => {
-                loading.classList.add("opacity-0");
-                setTimeout(() => (loading.style.display = "none"), 500);
-            }, 300);
-        };
-        } catch (err) {
-            console.error("Failed to load intern data:", err);
-        }
-
-
-        // Load joined rooms - this will be handled by fetchJoinedRooms() function
-        fetchJoinedRooms();
+    // Handle Firebase initialization errors
+    if (!firebase.apps.length) {
+        console.error("Firebase app not initialized");
+        alert("Application initialization error. Please refresh the page.");
+        return;
     }
 
+async function loadInternData(userInfo, user) {
+        try {
+            console.log("DEBUG: loadInternData started for user:", user.uid);
+            // Get joined rooms using collectionGroup
+            console.log("DEBUG: About to query memberships for intern");
+            const membersSnap = await db.collectionGroup("members").where("internId", "==", user.uid).get();
+            console.log("Fetching rooms for intern...");
+            const joinedRooms = [];
+            for (const doc of membersSnap.docs) {
+              const roomId = doc.ref.parent.parent.id;
+              joinedRooms.push({
+                roomId: roomId,
+                data: doc.data()
+              });
+            }
+            console.log("DEBUG: joinedRooms found:", joinedRooms.length);
+
+            // For each room, load data if needed
+            for (const { roomId, data: memberData } of joinedRooms) {
+                console.log("DEBUG: Processing room:", roomId);
+                try {
+                  const roomDoc = await db.collection("rooms").doc(roomId).get();
+                  console.log("DEBUG: roomDoc exists:", roomDoc.exists);
+                  if (!roomDoc.exists) continue;
+                  const roomData = roomDoc.data();
+
+                  // If supervisor room (has geofence), load geofence
+                  console.log("DEBUG: About to query geofences for room:", roomId);
+                  try {
+                    const geofenceSnap = await db.collection("rooms").doc(roomId).collection("geofences").limit(1).get();
+                    console.log("DEBUG: geofenceSnap empty:", geofenceSnap.empty);
+                    if (!geofenceSnap.empty) {
+                        const geo = geofenceSnap.docs[0].data();
+                        if (geo.center) {
+                            geofenceCenter = [geo.center.lat, geo.center.lng];
+                            geofenceRadius = geo.radius || 100;
+                            // Initialize map
+                            setTimeout(() => {
+                                if (!mapInitialized) {
+                                    map = L.map('map').setView([10.7502, 121.9324], 15);
+                                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                                        maxZoom: 19,
+                                    }).addTo(map);
+                                    mapInitialized = true;
+                                } else {
+                                    if (map) {
+                                        map.setView([geofenceCenter[0], geofenceCenter[1]], 17);
+                                    }
+                                }
+
+                                if (geofenceCircle) {
+                                    map.removeLayer(geofenceCircle);
+                                }
+
+                                geofenceCircle = L.circle(geofenceCenter, {
+                                    radius: geofenceRadius,
+                                    color: "red",
+                                    fillColor: "#f03",
+                                    fillOpacity: 0.3
+                                }).addTo(map);
+
+                                map.fitBounds(geofenceCircle.getBounds());
+                            }, 300);
+                        }
+                    }
+                  } catch (err) {
+                    console.warn(`DEBUG: Could not get geofences for room ${roomId}:`, err);
+                  }
+
+                  // Load tasks for the room
+                  try {
+                      console.log("DEBUG: About to query tasks for room:", roomId);
+                      const tasksSnap = await db.collection("rooms").doc(roomId).collection("tasks").get();
+                      console.log("DEBUG: tasksSnap empty:", tasksSnap.empty);
+                      const taskList = document.getElementById("taskList");
+                      taskList.innerHTML = ""; // Clear loading message
+
+                      if (tasksSnap.empty) {
+                          taskList.innerHTML =
+                              "<li class='text-gray-500'>No tasks posted yet.</li>";
+                      } else {
+                          tasksSnap.forEach((doc) => {
+                              const task = doc.data();
+                              const li = document.createElement("li");
+                              li.className = "border border-gray-300 rounded p-4";
+                              li.innerHTML = `
+                                  <h3 class="text-lg font-semibold text-blue-700 mb-1">${task.title}</h3>
+                                  <p class="text-gray-700 mb-1">${task.description}</p>
+                                  <p class="text-sm text-gray-500">Posted on: ${task.createdAt?.toDate().toLocaleString() || "Unknown date"}</p>
+                              `;
+                              taskList.appendChild(li);
+                          });
+                      }
+                  } catch (err) {
+                      console.error("Error loading tasks:", err);
+                      document.getElementById("taskList").innerHTML =
+                          "<li class='text-red-600'>❌ Failed to load tasks.</li>";
+                  }
+                } catch (err) {
+                  console.warn(`DEBUG: Could not get room ${roomId}:`, err);
+                }
+            }
+
+            // Load total hours for progress bar (only if a room is selected)
+            const container = document.getElementById("roomScheduleContainer");
+            const activeRoom = container.dataset.activeRoom;
+            if (activeRoom) {
+                loadTotalHours(activeRoom);
+            }
+            loadHoursLeft(activeRoom);
+            refreshBtn(activeRoom);
+
+            modal.style.display = "none";
+
+            // At the very end of onAuthStateChanged
+            setTimeout(() => {
+                const loading = document.getElementById("loadingScreen");
+                loading.classList.add("opacity-0");
+                setTimeout(() => (loading.style.display = "none"), 300);
+            }, 100);
+
+            window.onload = () => {
+                const loading = document.getElementById("loadingScreen");
+                setTimeout(() => {
+                    loading.classList.add("opacity-0");
+                    setTimeout(() => (loading.style.display = "none"), 500);
+                }, 300);
+            };
+
+            // Load joined rooms
+            fetchJoinedRooms();
+        } catch (error) {
+            console.error('Error loading intern data:', error);
+            // Gracefully handle permission errors by proceeding without loading joined rooms data
+            modal.style.display = "none";
+            setTimeout(() => {
+                const loading = document.getElementById("loadingScreen");
+                loading.classList.add("opacity-0");
+                setTimeout(() => (loading.style.display = "none"), 300);
+            }, 100);
+        }
+    }
 });
 
-let currentPage = 1;
-const pageSize = 5;
-let currentSchedules = [];
+async function checkSupervisorZoneStatus(user) {
+  try {
+    console.log("DEBUG: checkSupervisorZoneStatus started");
+    console.log("DEBUG: User present:", user.uid);
+
+    // Determine user role
+    const userId = user.uid;
+    const isCoordinator = await db.collection("coordinators").doc(userId).get().then(doc => doc.exists);
+    const isSupervisor = await db.collection("supervisors").doc(userId).get().then(doc => doc.exists);
+    const isIntern = !isCoordinator && !isSupervisor;
+
+    console.log(`DEBUG: User roles - Coordinator: ${isCoordinator}, Supervisor: ${isSupervisor}, Intern: ${isIntern}`);
+
+    const joinedRooms = [];
+
+    if (isIntern) {
+      // Interns: fetch only their own membership docs
+      console.log("DEBUG: Intern user - fetching own membership docs");
+      try {
+        const membersSnap = await db.collectionGroup("members").where("internId", "==", user.uid).get();
+        for (const doc of membersSnap.docs) {
+          const roomId = doc.ref.parent.parent.id;
+          joinedRooms.push({
+            roomId: roomId,
+            data: doc.data()
+          });
+        }
+      } catch (err) {
+        console.warn("DEBUG: Could not get memberships for intern:", err);
+      }
+    } else {
+      // Coordinators and supervisors: fetch all interns in each room
+      console.log("DEBUG: Coordinator/Supervisor user - fetching all interns in rooms");
+      try {
+        const roomsSnap = await db.collection("rooms").get();
+        for (const roomDoc of roomsSnap.docs) {
+          try {
+            const internsSnap = await db.collection("rooms").doc(roomDoc.id).collection("members").get();
+            if (!internsSnap.empty) {
+              joinedRooms.push({
+                roomId: roomDoc.id,
+                data: internsSnap.docs.map(doc => doc.data())
+              });
+            }
+          } catch (err) {
+            console.warn(`DEBUG: Could not get interns for room ${roomDoc.id}:`, err);
+          }
+        }
+      } catch (err) {
+        console.warn("DEBUG: Could not get rooms for coordinator/supervisor:", err);
+      }
+    }
+
+    console.log("DEBUG: joinedRooms found:", joinedRooms.length);
+
+    let supervisorRoomId = null;
+
+    // Check if any of the joined rooms has a geofence
+    for (const { roomId } of joinedRooms) {
+      console.log("DEBUG: Checking geofence for room:", roomId);
+      try {
+        const geofenceSnap = await db.collection("rooms")
+          .doc(roomId)
+          .collection("geofences")
+          .limit(1) // just need to know if one exists
+          .get();
+        console.log("DEBUG: geofenceSnap for room", roomId, "empty:", geofenceSnap.empty);
+
+        if (!geofenceSnap.empty) {
+          supervisorRoomId = roomId;
+          console.log("DEBUG: Found supervisor room:", supervisorRoomId);
+          break;
+        }
+      } catch (err) {
+        console.warn(`DEBUG: Could not get geofence for room ${roomId}:`, err);
+      }
+    }
+
+    const inputDiv = document.getElementById('supervisorZoneInput');
+    const connectedMsg = document.getElementById('supervisorZoneConnected');
+    const input = document.getElementById('supervisorRoomCodeInput');
+
+    if (supervisorRoomId) {
+      // Hide input, show connected message
+      inputDiv.style.display = 'none';
+      connectedMsg.classList.remove('hidden');
+      connectedMsg.innerHTML = `
+        <p>Connected to supervisor zone: <strong>${supervisorRoomId}</strong></p>
+        <div class="flex gap-2 mt-2">
+          <a href="#" onclick="toggleMapModal()" class="px-3 py-1 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition flex items-center gap-1">
+            <i class="fas fa-map"></i>
+            View Map
+          </a>
+          <button onclick="disconnectSupervisorZone()" class="px-3 py-1 bg-red-600 text-white text-xs rounded-lg hover:bg-red-700 transition flex items-center gap-1">
+            <i class="fas fa-unlink"></i>
+            Disconnect
+          </button>
+        </div>
+      `;
+    } else {
+      // Show input and button
+      inputDiv.style.display = 'flex';
+      connectedMsg.classList.add('hidden');
+      input.value = '';
+    }
+  } catch (error) {
+    console.error('Error checking supervisor zone status:', error);
+    // Handle gracefully if no permission or not found
+    const inputDiv = document.getElementById('supervisorZoneInput');
+    const connectedMsg = document.getElementById('supervisorZoneConnected');
+    if (inputDiv && connectedMsg) {
+      inputDiv.style.display = 'flex';
+      connectedMsg.classList.add('hidden');
+    }
+  }
+}
+
+let currentTimeEntries = [];
+let currentTimeEntryIndex = 0;
 
 // Function to display result messages
 function showResultMessage(message, type) {
@@ -442,7 +697,7 @@ function showResultMessage(message, type) {
   }
 }
 
-async function displayRoomSchedule(roomCode) {
+async function displayRoomSchedule(roomId) {
     const container = document.getElementById("roomScheduleContainer");
     const nonSupervisorElements = document.getElementById("nonSupervisorElements");
     const tableDiv = document.getElementById("roomScheduleTable");
@@ -450,14 +705,11 @@ async function displayRoomSchedule(roomCode) {
     container.classList.remove("hidden");
 
     // Get room name
-    let roomName = "Room Schedule";
+    let roomName = "Room Time Entries";
     try {
-        const roomSnap = await db.collection("rooms")
-            .where("joinCode", "==", roomCode)
-            .limit(1)
-            .get();
-        if (!roomSnap.empty) {
-            roomName = roomSnap.docs[0].data().roomName || "Unnamed Room";
+        const roomDoc = await db.collection("rooms").doc(roomId).get();
+        if (roomDoc.exists) {
+            roomName = roomDoc.data().roomName || "Unnamed Room";
         }
     } catch (err) {
         console.error("Failed to fetch room name:", err);
@@ -465,31 +717,28 @@ async function displayRoomSchedule(roomCode) {
     document.getElementById("roomScheduleTitle").textContent = roomName;
 
     // Check if geofence exists for this room (supervisor room)
-    const geoSnap = await db.collection("geofences").doc(roomCode).get();
-    if (geoSnap.exists) {
+    const geoSnap = await db.collection("rooms").doc(roomId).collection("geofences").limit(1).get();
+    if (!geoSnap.empty) {
         // This is a supervisor room - show supervisor elements with map
         nonSupervisorElements.classList.add("hidden");
         const supervisorElements = document.getElementById("supervisorElements");
         supervisorElements.classList.remove("hidden");
 
-        // Initialize map for supervisor room with delay to ensure div is rendered
+        // Initialize map for supervisor room
         setTimeout(() => {
-            const geofenceData = geoSnap.data();
+            const geofenceData = geoSnap.docs[0].data();
             const center = geofenceData.center;
             const radius = geofenceData.radius || 100;
 
-            // Clear any existing map
             const mapDiv = document.getElementById("roomMap");
             mapDiv.innerHTML = "";
 
-            // Create new Leaflet map instance
             const supervisorMap = L.map(mapDiv).setView([center.lat, center.lng], 15);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
                 maxZoom: 19,
             }).addTo(supervisorMap);
 
-            // Add geofence circle
             const geofenceCircle = L.circle([center.lat, center.lng], {
                 radius: radius,
                 color: "red",
@@ -497,10 +746,8 @@ async function displayRoomSchedule(roomCode) {
                 fillOpacity: 0.3
             }).addTo(supervisorMap);
 
-            // Fit map to geofence bounds
             supervisorMap.fitBounds(geofenceCircle.getBounds());
 
-            // Invalidate size after a short delay
             setTimeout(() => {
                 supervisorMap.invalidateSize();
             }, 100);
@@ -509,107 +756,175 @@ async function displayRoomSchedule(roomCode) {
         return;
     }
 
-    console.log("🔍 DEBUG displayRoomSchedule: No geofence found for room:", roomCode, "- showing schedule elements");
-    // This is a non-supervisor room - show schedule and other elements
+    // This is a non-supervisor room - show time entries
     nonSupervisorElements.classList.remove("hidden");
 
-    // Load schedule as before
-    tableDiv.innerHTML = "<p class='text-gray-500'>Loading schedule...</p>";
+    tableDiv.innerHTML = "<p class='text-gray-500'>Loading time entries...</p>";
     try {
-        const scheduleSnap = await db.collection("schedules")
-            .where("roomCode", "==", roomCode)
-            .limit(1)
-            .get();
+        const entriesSnap = await db.collection("rooms").doc(roomId).collection("schedules").orderBy("createdAt", "desc").get();
 
-        if (scheduleSnap.empty) {
-            tableDiv.innerHTML = "<p class='text-gray-500'>No schedule found for this room.</p>";
+        console.log("DEBUG: Time entries fetched for room", roomId, "total docs:", entriesSnap.size);
+        let filteredCount = 0;
+        entriesSnap.docs.forEach(doc => {
+            if (doc.id === auth.currentUser.uid) {
+                filteredCount++;
+                console.log("DEBUG: Time entry:", doc.id, doc.data());
+            }
+        });
+        console.log("DEBUG: Filtered time entries for current user:", filteredCount);
+
+        if (entriesSnap.empty) {
+            tableDiv.innerHTML = "<p class='text-gray-500'>No time entries found for this room.</p>";
             return;
         }
 
-        const dailyTimes = scheduleSnap.docs[0].data().dailyTimes || [];
-        if (dailyTimes.length === 0) {
-            tableDiv.innerHTML = "<p class='text-gray-500'>No schedule entries for this room.</p>";
-            return;
-        }
+        currentTimeEntries = [];
+        entriesSnap.docs.forEach(doc => {
+            const data = doc.data();
+            const date = data.date;
+            const createdAt = data.createdAt;
 
-        currentSchedules = dailyTimes.sort((a, b) => {
-            const dateA = a.date?.toDate ? a.date.toDate() : new Date(a.date);
-            const dateB = b.date?.toDate ? b.date.toDate() : new Date(b.date);
-            return dateB - dateA;
+            // Morning slot
+            if (data.morningIn && data.morningOut) {
+                currentTimeEntries.push({
+                    date: date,
+                    period: "Morning",
+                    start: data.morningIn,
+                    end: data.morningOut,
+                    dayTotalHours: data.dayTotalHours,
+                    totalHours: data.totalHours,
+                    createdAt: createdAt
+                });
+            }
+
+            // Afternoon slot
+            if (data.afternoonIn && data.afternoonOut) {
+                currentTimeEntries.push({
+                    date: date,
+                    period: "Afternoon",
+                    start: data.afternoonIn,
+                    end: data.afternoonOut,
+                    dayTotalHours: data.dayTotalHours,
+                    totalHours: data.totalHours,
+                    createdAt: createdAt
+                });
+            }
+
+            // Evening slot
+            if (data.eveningIn && data.eveningOut) {
+                currentTimeEntries.push({
+                    date: date,
+                    period: "Evening",
+                    start: data.eveningIn,
+                    end: data.eveningOut,
+                    dayTotalHours: data.dayTotalHours,
+                    totalHours: data.totalHours,
+                    createdAt: createdAt
+                });
+            }
         });
 
-        currentPage = 1;
-        renderScheduleTable();
+        // Sort by date desc, then by period order (Morning, Afternoon, Evening)
+        currentTimeEntries.sort((a, b) => {
+            const dateA = new Date(a.createdAt);
+            const dateB = new Date(b.createdAt);
+            if (dateA.getTime() !== dateB.getTime()) {
+                return dateB - dateA; // Newest dates first
+            }
+            // Same date, sort by period order
+            const periodOrder = { "Morning": 1, "Afternoon": 2, "Evening": 3 };
+            return periodOrder[a.period] - periodOrder[b.period];
+        });
 
-        // Pagination controls
-        document.getElementById("prevPage").onclick = () => {
-            if (currentPage > 1) {
-                currentPage--;
-                renderScheduleTable();
-            }
-        };
-        document.getElementById("nextPage").onclick = () => {
-            if (currentPage < Math.ceil(currentSchedules.length / pageSize)) {
-                currentPage++;
-                renderScheduleTable();
-            }
-        };
+        currentTimeEntryIndex = 0;
+        renderTimeEntryCards();
     } catch (err) {
-        console.error("Failed to fetch room schedule:", err);
-        tableDiv.innerHTML = "<p class='text-red-500'>❌ Failed to load schedule.</p>";
+        console.error("Failed to fetch room time entries:", err);
+        if (err.code === 'permission-denied') {
+            tableDiv.innerHTML = "<p class='text-red-500'>❌ Access denied to time entry data.</p>";
+        } else {
+            tableDiv.innerHTML = "<p class='text-red-500'>❌ Failed to load time entries.</p>";
+        }
     }
 }
 
-
-function renderScheduleTable() {
+function renderTimeEntryCards() {
     const tableDiv = document.getElementById("roomScheduleTable");
-    const start = (currentPage - 1) * pageSize;
-    const end = start + pageSize;
-    const pageData = currentSchedules.slice(start, end);
 
-    let html = `
-        <table class="w-full text-sm text-left text-gray-500 shadow">
-            <thead class="text-xs text-blue-700 uppercase bg-blue-100">
-                <tr>
-                    <th class="px-2 py-2 md:px-4">Date</th>
-                    <th class="px-2 py-2 md:px-4">Start</th>
-                    <th class="px-2 py-2 md:px-4">End</th>
-                    <th class="px-2 py-2 md:px-4">Day</th>
-                </tr>
-            </thead>
-            <tbody>
-    `;
-    pageData.forEach(s => {
-        // Parse date and get day of the week
-        let dayOfWeek = "N/A";
-        if (s.date) {
-            try {
-                const [month, day, year] = s.date.split('-').map(Number);
-                const dateObj = new Date(year, month - 1, day);
-                const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-                dayOfWeek = days[dateObj.getDay()];
-            } catch (e) {
-                dayOfWeek = "Invalid date";
-            }
-        }
-
-        html += `
-            <tr class="border-b">
-                <td class="px-2 py-2 md:px-4 text-xs md:text-sm">${s.date || "N/A"}</td>
-                <td class="px-2 py-2 md:px-4 text-xs md:text-sm">${s.start || "-"}</td>
-                <td class="px-2 py-2 md:px-4 text-xs md:text-sm">${s.end || "-"}</td>
-                <td class="px-2 py-2 md:px-4 text-xs md:text-sm">${dayOfWeek}</td>
-            </tr>
-        `;
-    });
-    html += "</tbody></table>";
-    tableDiv.innerHTML = `<div class="overflow-x-auto">${html}</div>`;
-
-    // Update pagination info
-    const pageInfo = document.getElementById("pageInfo");
-    if (pageInfo) {
-        pageInfo.textContent = `Page ${currentPage} of ${Math.ceil(currentSchedules.length / pageSize)}`;
+    if (currentTimeEntries.length === 0) {
+        tableDiv.innerHTML = "<p class='text-gray-500'>No time entries available.</p>";
+        return;
     }
+
+    const entry = currentTimeEntries[currentTimeEntryIndex];
+    let dayOfWeek = "N/A";
+    if (entry.date) {
+        try {
+            const [year, month, day] = entry.date.split('-').map(Number);
+            const dateObj = new Date(year, month - 1, day);
+            const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+            dayOfWeek = days[dateObj.getDay()];
+        } catch (e) {
+            dayOfWeek = "Invalid date";
+        }
+    }
+
+    const html = `
+        <div class="bg-white border border-gray-300 rounded-lg shadow-md p-6">
+            <h3 class="text-lg font-semibold text-blue-700 mb-4 text-center">Time Entry</h3>
+            <div class="grid grid-cols-2 gap-4">
+                <div class="text-center">
+                    <p class="text-sm text-gray-500">Date</p>
+                    <p class="text-lg font-medium">${entry.date || "N/A"}</p>
+                </div>
+                <div class="text-center">
+                    <p class="text-sm text-gray-500">Period</p>
+                    <p class="text-lg font-medium">${entry.period || "N/A"}</p>
+                </div>
+                <div class="text-center">
+                    <p class="text-sm text-gray-500">Start Time</p>
+                    <p class="text-lg font-medium">${entry.start || "-"}</p>
+                </div>
+                <div class="text-center">
+                    <p class="text-sm text-gray-500">End Time</p>
+                    <p class="text-lg font-medium">${entry.end || "-"}</p>
+                </div>
+                <div class="text-center">
+                    <p class="text-sm text-gray-500">Day</p>
+                    <p class="text-lg font-medium">${dayOfWeek}</p>
+                </div>
+                <div class="text-center">
+                    <p class="text-sm text-gray-500">Day Hours</p>
+                    <p class="text-lg font-medium">${entry.dayTotalHours || "-"}</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex items-center justify-center space-x-4 mt-4">
+            <button id="prevTimeEntry" class="px-3 py-2 mr-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400"${currentTimeEntryIndex === 0 ? 'disabled' : ''}>
+                <i class="fas fa-arrow-left"></i>
+            </button>
+            <span class="text-sm text-gray-600">${currentTimeEntryIndex + 1} of ${currentTimeEntries.length}</span>
+            <button id="nextTimeEntry" class="px-3 py-2 ml-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400" ${currentTimeEntryIndex === currentTimeEntries.length - 1 ? 'disabled' : ''}>
+                <i class="fas fa-arrow-right"></i>
+            </button>
+        </div>
+    `;
+    tableDiv.innerHTML = html;
+
+    // Add event listeners for navigation buttons
+    document.getElementById("prevTimeEntry").addEventListener("click", () => {
+        if (currentTimeEntryIndex > 0) {
+            currentTimeEntryIndex--;
+            renderTimeEntryCards();
+        }
+    });
+    document.getElementById("nextTimeEntry").addEventListener("click", () => {
+        if (currentTimeEntryIndex < currentTimeEntries.length - 1) {
+            currentTimeEntryIndex++;
+            renderTimeEntryCards();
+        }
+    });
 }
 
 function proceedToDashboard() {
@@ -618,7 +933,6 @@ function proceedToDashboard() {
     document.getElementById("sidebar").style.display = "block";
     document.getElementById("heading").style.display = "block";
     
-    // Only show mobile menu button on small screens (respect CSS breakpoints)
     if (window.innerWidth < 1024) {
         document.getElementById("mobile-menu-button").style.display = "block";
     }
@@ -638,208 +952,195 @@ function logoutAndReset() {
                 document.getElementById("mainContent").style.display = "none";
                 document.getElementById("sidebar").style.display = "none";
 
-                // Only hide mobile menu button on small screens (respect CSS breakpoints)
                 if (window.innerWidth < 1024) {
                     document.getElementById("mobile-menu-button").style.display = "none";
                 }
 
                 document.getElementById("heading").style.display = "none";
-
-                // Redirect to index.html after logout
-                //window.location.href = "index.html";
             })
         ;
     }
 }
 
-async function checkGeofence(roomCode = null) {
+async function checkGeofence(roomId = null) {
+    console.debug("[DEBUG] checkGeofence called with roomId:", roomId);
     if (!geofenceCenter || !geofenceRadius) {
+        console.debug("[DEBUG] Geofence not set.");
         showResultMessage("Geofence not set.", "error");
         return;
     }
 
     if (!navigator.geolocation) {
+        console.debug("[DEBUG] Geolocation not supported.");
         showResultMessage("Geolocation not supported.", "error");
         return;
     }
 
-    // Check if a room is selected
     const container = document.getElementById("roomScheduleContainer");
     const activeRoom = container.dataset.activeRoom;
 
-    if (!activeRoom && !roomCode) {
+    if (!activeRoom && !roomId) {
+        console.debug("[DEBUG] No active room selected.");
         showResultMessage("Please select a room first.", "error");
         return;
     }
 
-    const targetRoomCode = roomCode || activeRoom;
-    showResultMessage("Checking location", "info");
+    const targetRoomId = roomId || activeRoom;
+    console.debug("[DEBUG] Target room ID:", targetRoomId);
 
-    // 1. Fetch the schedule for the selected room
+    // Check if user is a member of the room
+    console.log("[TIME_IN] Checking if user is member of room:", targetRoomId);
+    const memberDoc = await db.collection("rooms").doc(targetRoomId).collection("members").doc(auth.currentUser.uid).get();
+    if (!memberDoc.exists) {
+        console.log("[TIME_IN] User is not a member of this room");
+        showResultMessage("You are not a member of this room.", "error");
+        return;
+    }
+    console.log("[TIME_IN] User is a member of the room");
+
+    // Fetch schedule from rooms collection
     let scheduleDoc;
     try {
-        const scheduleSnap = await db.collection("schedules")
-            .where("roomCode", "==", targetRoomCode)
-            .limit(1)
-            .get();
-            
-        if (scheduleSnap.empty) {
-            showResultMessage("No schedule found for the selected room.", "error");
+        console.log("[TIME_IN] Fetching schedules for room:", targetRoomId);
+        const entriesSnap = await db.collection("rooms").doc(targetRoomId).collection("schedules").orderBy("createdAt", "desc").get();
+        console.log("[TIME_IN] Fetched", entriesSnap.size, "schedule documents");
+        if (entriesSnap.empty) {
+            console.log("[TIME_IN] No schedule found for this room");
+            showResultMessage("No schedule found for this room.", "error");
             return;
         }
-
-        scheduleDoc = scheduleSnap.docs[0];
+        scheduleDoc = entriesSnap.docs[0]; // take the latest schedule
+        console.log("[TIME_IN] Using schedule doc id:", scheduleDoc.id);
     } catch (err) {
+        console.error("[TIME_IN] Failed to load schedule:", err);
         showResultMessage("Failed to load schedule.", "error");
         return;
     }
 
     const schedule = scheduleDoc.data();
-    const allowedDays = Array.isArray(schedule.allowedDays) ? schedule.allowedDays : [];
+    console.debug("[DEBUG] Schedule data:", schedule);
 
-    // 2. Determine today's day key
-    const dayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-    const todayKey = dayKeys[new Date().getDay()];
-
-    if (!allowedDays.includes(todayKey)) {
-        showResultMessage(`You are not allowed to time in today (${todayKey.toUpperCase()}).`, "error");
-        return;
-    }
-
-    // 3. Get today's start and end time from dailyTimes map
+    // Find today's schedule entry - check if schedule date matches today
     const today = new Date();
-    const todayDateStr = `${today.getMonth() + 1}-${today.getDate()}-${today.getFullYear()}`;
-    console.log("Looking for schedule date:", todayDateStr);
-    console.log("Available schedule dates:", schedule.dailyTimes?.map(t => t.date));
+    const todayDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`; // YYYY-MM-DD format
+    console.debug("[DEBUG] Today's date string:", todayDateStr);
 
-    const todayTimes = schedule.dailyTimes?.find(
-        t => t.date === todayDateStr
-    );
-
-    if (!todayTimes) {
-        showResultMessage(`No schedule defined for today (${todayKey.toUpperCase()}).`, "error");
+    // Check if schedule is for today
+    if (schedule.date !== todayDateStr) {
+        console.log("[TIME_IN] No schedule defined for today:", todayDateStr, "schedule date:", schedule.date);
+        showResultMessage(`No schedule defined for today (${todayDateStr}).`, "error");
         return;
     }
 
-    const startTime = todayTimes.start;
-    const endTime = todayTimes.end;
-
-    // 4. Validate current time with restriction: allow time in only 2 hours early before startTime
+    // Determine which time period is currently active based on current time
     const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+    let startTime, endTime, activePeriod;
+
+    // Check morning period
+    if (schedule.morningIn && schedule.morningOut) {
+        const [morningStartHour, morningStartMin] = schedule.morningIn.split(":").map(Number);
+        const [morningEndHour, morningEndMin] = schedule.morningOut.split(":").map(Number);
+        const morningStartMinutes = morningStartHour * 60 + morningStartMin;
+        const morningEndMinutes = morningEndHour * 60 + morningEndMin;
+
+        if (currentMinutes >= morningStartMinutes - 120 && currentMinutes <= morningEndMinutes) {
+            startTime = schedule.morningIn;
+            endTime = schedule.morningOut;
+            activePeriod = "morning";
+            console.log(`[TIME_IN] Active period found: morning, current time: ${now.toLocaleTimeString()}, startTime: ${startTime}, endTime: ${endTime}`);
+        }
+    }
+
+    // Check afternoon period if morning not active
+    if (!startTime && schedule.afternoonIn && schedule.afternoonOut) {
+        const [afternoonStartHour, afternoonStartMin] = schedule.afternoonIn.split(":").map(Number);
+        const [afternoonEndHour, afternoonEndMin] = schedule.afternoonOut.split(":").map(Number);
+        const afternoonStartMinutes = afternoonStartHour * 60 + afternoonStartMin;
+        const afternoonEndMinutes = afternoonEndHour * 60 + afternoonEndMin;
+
+        if (currentMinutes >= afternoonStartMinutes - 120 && currentMinutes <= afternoonEndMinutes) {
+            startTime = schedule.afternoonIn;
+            endTime = schedule.afternoonOut;
+            activePeriod = "afternoon";
+            console.log(`[TIME_IN] Active period found: afternoon, current time: ${now.toLocaleTimeString()}, startTime: ${startTime}, endTime: ${endTime}`);
+        }
+    }
+
+    // Check evening period if neither morning nor afternoon is active
+    if (!startTime && schedule.eveningIn && schedule.eveningOut) {
+        const [eveningStartHour, eveningStartMin] = schedule.eveningIn.split(":").map(Number);
+        const [eveningEndHour, eveningEndMin] = schedule.eveningOut.split(":").map(Number);
+        const eveningStartMinutes = eveningStartHour * 60 + eveningStartMin;
+        const eveningEndMinutes = eveningEndHour * 60 + eveningEndMin;
+
+        const isWrapAround = eveningEndMinutes < eveningStartMinutes;
+        if (isWrapAround ? (currentMinutes >= eveningStartMinutes - 120 || currentMinutes <= eveningEndMinutes) : (currentMinutes >= eveningStartMinutes - 120 && currentMinutes <= eveningEndMinutes)) {
+            startTime = schedule.eveningIn;
+            endTime = schedule.eveningOut;
+            activePeriod = "evening";
+            console.log(`[TIME_IN] Active period found: evening, current time: ${now.toLocaleTimeString()}, startTime: ${startTime}, endTime: ${endTime}`);
+        }
+    }
+
+    if (!startTime || !endTime) {
+        console.log(`[TIME_IN] No active time period found, current time: ${now.toLocaleTimeString()}`);
+        showResultMessage("No active schedule period for the current time.", "error");
+        return;
+    }
+
+    console.log(`[TIME_IN] Active period: ${activePeriod}, start: ${startTime}, end: ${endTime}`);
+
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
     const [startHour, startMin] = startTime.split(":").map(Number);
     const [endHour, endMin] = endTime.split(":").map(Number);
     const startMinutes = startHour * 60 + startMin;
-    const endMinutes = endHour * 60 + endMin;
+    const earliestAllowedMinutes = startMinutes - 120;
 
-    // Calculate earliest allowed time to time in (2 hours before startTime)
-    const earliestAllowedMinutes = startMinutes - 120; // 2 hours = 120 minutes
+    console.debug(`[DEBUG] Current time in minutes: ${nowMinutes}, earliest allowed: ${earliestAllowedMinutes}`);
 
-    if (nowMinutes < earliestAllowedMinutes) {
-        showResultMessage(`You are too early to time in. Allowed starting from ${Math.floor(earliestAllowedMinutes / 60)}:${(earliestAllowedMinutes % 60).toString().padStart(2, '0')}`, "error");
-        return;
-    }
+    console.log("[TIME_IN] Schedule check passed - user is allowed to time in today");
 
-    // 5. Geolocation check
+    console.log("[TIME_IN] Checking location - requesting geolocation");
+    showResultMessage("Checking location", "info");
+
     navigator.geolocation.getCurrentPosition(
         async (pos) => {
             const lat = pos.coords.latitude;
             const lng = pos.coords.longitude;
 
+            console.log("[TIME_IN] Geolocation success - position:", { lat, lng });
+
             showCurrentLocationOnMap(lat, lng);
 
             const distance = getDistance(lat, lng, geofenceCenter[0], geofenceCenter[1]);
+            console.log("[TIME_IN] Distance calculated:", distance, "meters (radius:", geofenceRadius, ") - within geofence?", distance <= geofenceRadius);
 
             if (distance <= geofenceRadius) {
-                // Determine mark: "Late" if time in after startTime, else "Present"
+                console.log("[TIME_IN] Inside geofence - proceeding with time-in recording");
                 const mark = nowMinutes > startMinutes ? "Late" : "Present";
 
                 showResultMessage(`Time-in recorded!`, "success");
 
-                const internRef = db.collection("interns_inside").doc(auth.currentUser.uid);
+                // Log check-in event
+                await db.collection("rooms").doc(targetRoomId).collection("attendanceEvents").add({
+                    internId: auth.currentUser.uid,
+                    type: "CHECK_IN",
+                    timestamp: new Date(),
+                    locationValid: true,
+                    mark: mark
+                });
 
-                try {
-                    const doc = await internRef.get();
-                    if (doc.exists) {
-                        // Document exists, update it
-                        await internRef.update({
-                            timeLogs: firebase.firestore.FieldValue.arrayUnion({
-                                timeIn: new Date(),
-                                location: { lat, lng },
-                                mark: mark
-                            }),
-                            internEmail: auth.currentUser.email,
-                            supervisorEmail: currentIntern.supervisorEmail,
-                            status: "inside",
-                            recentTimeIn: new Date(),
-                            roomCode: targetRoomCode,
-                        });
-                    } else {
-                        // Document does not exist, create new one
-                        // Fetch total hours from the schedule document for the selected room
-                        const scheduleSnap = await db.collection("schedules")
-                            .where("roomCode", "==", targetRoomCode)
-                            .limit(1)
-                            .get();
+                loadTotalHours(targetRoomId);
+                loadHoursLeft(targetRoomId);
+                refreshBtn(targetRoomId);
 
-                        if (scheduleSnap.empty) {
-                            showResultMessage("Failed to fetch schedule", "error");
-                            return;
-                        }
-
-                        const scheduleData = scheduleSnap.docs[0].data();
-                        const totalHours = scheduleData.totalHours || 0;
-
-                        await internRef.set({
-                            timeLogs: [
-                                {
-                                    timeIn: new Date(),
-                                    location: { lat, lng },
-                                    mark: mark
-                                },
-                            ],
-                            internEmail: auth.currentUser.email,
-                            supervisorEmail: currentIntern.supervisorEmail,
-                            status: "inside",
-                            hoursLeft: totalHours,
-                            recentTimeIn: new Date(),
-                            createdAt: new Date(),
-                            roomCode: targetRoomCode,
-                        });
-                    }
-
-                    // Record intern report for time in
-                    console.log("DEBUG: Auth state:", auth.currentUser);
-                    console.log("DEBUG: Auth token:", auth.currentUser ? auth.currentUser.getIdToken() : "No token");
-
-                    try {
-                        // Always create new report document (consistent with time-out)
-                        const internReportsRef = db.collection("intern_reports").doc();
-                        await internReportsRef.set({
-                            internEmail: auth.currentUser.email.toLowerCase(),
-                            timeIn: new Date(),
-                            mark: mark,
-                            roomCode: targetRoomCode,
-                            createdAt: new Date()
-                        });
-                    } catch (err) {
-                        console.error("Failed to record intern report time in:", err);
-                    }
-
-                    // Update UI after successful operations
-                    loadTotalHours();
-                    loadHoursLeft();
-                    refreshBtn();
-
-                    if (map) {
-                        if (internMarker) map.removeLayer(internMarker);
-                        internMarker = L.marker([lat, lng]).addTo(map)
-                            .bindPopup("Your Location")
-                            .openPopup();
-                    }
-                } catch (err) {
-                    console.error("Failed to record time-in:", err);
-                    showResultMessage("Failed to record time-in", "error");
+                if (map) {
+                    if (internMarker) map.removeLayer(internMarker);
+                    internMarker = L.marker([lat, lng]).addTo(map)
+                        .bindPopup("Your Location")
+                        .openPopup();
                 }
             } else {
                 showResultMessage("You are outside the geofence.", "error");
@@ -863,8 +1164,6 @@ function getDistance(lat1, lng1, lat2, lng2) {
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
 }
-
-
 
 function to12Hour(timeStr) {
     if (!timeStr) return "N/A";
@@ -898,7 +1197,6 @@ async function timeOut() {
 
     showResultMessage("Checking location", "info");
 
-    // Check if a room is selected
     const container = document.getElementById("roomScheduleContainer");
     const activeRoom = container.dataset.activeRoom;
 
@@ -909,18 +1207,18 @@ async function timeOut() {
 
     let scheduleDoc;
     try {
-        const scheduleSnap = await db.collection("schedules")
-            .where("roomCode", "==", activeRoom)
-            .limit(1)
-            .get();
-
-        if (scheduleSnap.empty) {
+        console.log("[TIME_OUT] Fetching schedules for room:", activeRoom);
+        const entriesSnap = await db.collection("rooms").doc(activeRoom).collection("schedules").orderBy("createdAt", "desc").get();
+        console.log("[TIME_OUT] Fetched", entriesSnap.size, "schedule documents");
+        if (entriesSnap.empty) {
+            console.log("[TIME_OUT] No schedule found for this room");
             showResultMessage("No schedule found for the selected room.", "error");
             return;
         }
-
-        scheduleDoc = scheduleSnap.docs[0];
+        scheduleDoc = entriesSnap.docs[0]; // take the latest schedule
+        console.log("[TIME_OUT] Using schedule doc id:", scheduleDoc.id);
     } catch (err) {
+        console.error("[TIME_OUT] Failed to load schedule:", err);
         showResultMessage("Failed to load schedule.", "error");
         return;
     }
@@ -932,172 +1230,74 @@ async function timeOut() {
 
             showCurrentLocationOnMap(lat, lng);
 
-            const distance = getDistance(
-                lat,
-                lng,
-                geofenceCenter[0],
-                geofenceCenter[1]
-            );
+            const distance = getDistance(lat, lng, geofenceCenter[0], geofenceCenter[1]);
 
             if (distance <= geofenceRadius) {
-                // 1. Get today's schedule again for validation
                 const schedule = scheduleDoc.data();
                 const dayKeys = ["sun","mon","tue","wed","thu","fri","sat"];
                 const todayKey = dayKeys[new Date().getDay()];
-                const todayDateStr = `${new Date().getMonth() + 1}-${new Date().getDate()}-${new Date().getFullYear()}`;
-                const todayTimes = schedule.dailyTimes?.find(
-                    t => t.date === todayDateStr
-                );
+                const todayDateStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+                const todayTimes = schedule.dailyTimes?.find(t => t.date === todayDateStr);
 
                 if (!todayTimes) {
                     showResultMessage(`No schedule defined for today (${todayKey.toUpperCase()}).`, "error");
                     return;
                 }
 
-                
-                try {
-                    const internRef = db.collection("interns_inside").doc(auth.currentUser.uid);
+                const timeOut = new Date();
+                const now = new Date();
+                const [endHour, endMin] = todayTimes.end.split(":").map(Number);
+                const endDateTime = new Date();
+                endDateTime.setHours(endHour, endMin, 0, 0);
 
-                    // 1. First get the current document to capture recentTimeIn
-                    const internDoc = await internRef.get();
-                    if (!internDoc.exists) throw new Error("Intern record not found.");
-
-                    const data = internDoc.data();
-                    const recentTimeIn = data.recentTimeIn ? data.recentTimeIn.toDate() : null;
-                    
-                    // Fetch total hours from the schedule document for the selected room
-                    const scheduleSnap = await db.collection("schedules")
-                        .where("roomCode", "==", activeRoom)
-                        .limit(1)
-                        .get();
-                    
-                    if (scheduleSnap.empty) throw new Error("Schedule not found for the selected room.");
-                    
-                    const scheduleData = scheduleSnap.docs[0].data();
-                    const totalHours = scheduleData.totalHours || 0;
-                    
-                    const currentHoursLeft = Number(data.hoursLeft) || totalHours || 0;
-                    const totalHoursRem = Number(data.totalHoursSpent) || 0;
-
-                    // 2. Set timeOut, status, and determine labor_except
-                    const timeOut = new Date();
-                    const now = new Date();
-                    const [endHour, endMin] = todayTimes.end.split(":").map(Number);
-                    const endDateTime = new Date();
-                    endDateTime.setHours(endHour, endMin, 0, 0);
-
-                    let laborExcept = "normal";
-                    if (now > endDateTime) {
-                        laborExcept = "overtime";
-                    } else if (now < endDateTime) {
-                        laborExcept = "undertime";
-                    }
-
-                    // 3. Calculate hours spent if we have recentTimeIn
-                    let hoursSpent = 0;
-                    let hoursLeft = currentHoursLeft;
-                    let newTotalHoursSpent = totalHoursRem;
-                    
-                    if (recentTimeIn) {
-                        const diffMs = timeOut - recentTimeIn; // in ms
-                        hoursSpent = diffMs / (1000 * 60 * 60); // convert to hours
-
-                        // 4. Deduct from current hours left
-                        hoursLeft = Math.max(currentHoursLeft - hoursSpent, 0);
-
-                        // Append to totalHoursSpent
-                        newTotalHoursSpent = totalHoursRem + hoursSpent;
-                    }
-
-                    // Combine all updates into a single operation
-                    const updateData = {
-                        timeOut: timeOut,
-                        location: { lat, lng },
-                        status: "outside",
-                        labor_except: laborExcept,
-                        updatedAt: new Date(),
-                        hoursLeft: hoursLeft,
-                        totalHoursSpent: newTotalHoursSpent
-                    };
-                    
-                    if (recentTimeIn) {
-                        updateData.hoursSpent = firebase.firestore.FieldValue.increment(hoursSpent);
-                    }
-
-                    await internRef.update(updateData);
-
-                    // Record intern report for time out
-                    const internReportsRef = db.collection("intern_reports").doc();
-                    internReportsRef.set({
-                        internEmail: auth.currentUser.email.toLowerCase(),
-                        timeOut: new Date(),
-                        labor_except: laborExcept,
-                        roomCode: activeRoom,
-                        createdAt: new Date()
-                    }).catch((err) => {
-                        console.error("Failed to record intern report time out:", err);
-                    });
-
-                    if (hoursLeft > 0 && hoursLeft !== currentHoursLeft && recentTimeIn) {
-                        const { startDate, dailyTimes, hpd } = schedule; // hpd = hours per day
-
-                        if (startDate && dailyTimes && hpd) {
-                            let adjustedSchedule = [];
-                            let remainingHours = hoursLeft;
-                            let currentDate = new Date(startDate);
-
-                            while (remainingHours > 0) {
-                                const dayKey = ["sun","mon","tue","wed","thu","fri","sat"][currentDate.getDay()];
-                                const todaySchedule = dailyTimes.find(dt => dt.day === dayKey);
-
-                                if (todaySchedule) {
-                                    const workHours = Math.min(hpd, remainingHours);
-                                    adjustedSchedule.push({
-                                        date: `${currentDate.getMonth()+1}-${currentDate.getDate()}-${currentDate.getFullYear()}`,
-                                        day: dayKey,
-                                        start: todaySchedule.start,
-                                        end: todaySchedule.end,
-                                        hours: workHours
-                                    });
-                                    remainingHours -= workHours;
-                                }
-                                currentDate.setDate(currentDate.getDate() + 1);
-                            }
-
-                            try {
-                                await db.collection("interns_schedules")
-                                .doc(auth.currentUser.uid)
-                                .set({
-                                    internEmail: auth.currentUser.email,
-                                    adjusted_sched: adjustedSchedule,
-                                    updatedAt: new Date()
-                                }, { merge: true });
-                            } catch (scheduleErr) {
-                                console.warn("Failed to update intern schedule:", scheduleErr);
-                                // Don't fail the entire timeout operation if schedule update fails
-                            }
-                        }
-                    }
-
-                    showResultMessage("Time-out recorded!", "success");
-                    // Wait a moment for Firestore to propagate changes before refreshing UI
-                    setTimeout(() => {
-                        loadTotalHours();
-                        loadHoursLeft();
-                        refreshBtn();
-                    }, 500);
-                } catch (err) {
-                    console.error("Failed to record time out:", err);
-                    showResultMessage("Failed to record time out: " + err.message, "error");
+                let laborExcept = "normal";
+                if (now > endDateTime) {
+                    laborExcept = "overtime";
+                } else if (now < endDateTime) {
+                    laborExcept = "undertime";
                 }
 
-                if (map) {
-                    if (internMarker) map.removeLayer(internMarker);
-                    internMarker = L.marker([lat, lng])
-                        .addTo(map)
-                        .bindPopup("Your Location (Timed Out)")
-                        .openPopup();
+                // Find the last check-in event for duration calculation
+                const eventsSnap = await db.collection("rooms").doc(activeRoom).collection("attendanceEvents")
+                    .where("internId", "==", auth.currentUser.uid)
+                    .where("type", "==", "CHECK_IN")
+                    .orderBy("timestamp", "desc")
+                    .limit(1)
+                    .get();
+
+                let duration = 0;
+                if (!eventsSnap.empty) {
+                    const checkInTime = eventsSnap.docs[0].data().timestamp.toDate();
+                    duration = (timeOut - checkInTime) / (1000 * 60 * 60); // hours
                 }
+
+                // Log check-out event
+                await db.collection("rooms").doc(activeRoom).collection("attendanceEvents").add({
+                    internId: auth.currentUser.uid,
+                    type: "CHECK_OUT",
+                    timestamp: timeOut,
+                    duration: duration,
+                    laborExcept: laborExcept
+                });
+
+                // Update intern progressHours and room remainingHours
+                const internRef = db.collection("rooms").doc(activeRoom).collection("members").doc(auth.currentUser.uid);
+                await internRef.update({
+                    progressHours: firebase.firestore.FieldValue.increment(duration)
+                });
+
+                const roomRef = db.collection("rooms").doc(activeRoom);
+                await roomRef.update({
+                    remainingHours: firebase.firestore.FieldValue.increment(-duration)
+                });
+
+                showResultMessage("Time-out recorded!", "success");
+
+                setTimeout(() => {
+                    loadTotalHours(activeRoom);
+                    loadHoursLeft(activeRoom);
+                    refreshBtn(activeRoom);
+                }, 500);
             } else {
                 showResultMessage("You are outside the geofence. Cannot time out.", "error");
             }
@@ -1110,65 +1310,53 @@ async function timeOut() {
 
 let globalTotalHours = 0;
 
-// Function to load total hours and update progress bar
-async function loadTotalHours() {
+async function loadTotalHours(roomId) {
     try {
-        // Check if a room is selected
-        const container = document.getElementById("roomScheduleContainer");
-        const activeRoom = container.dataset.activeRoom;
-        
-        if (!activeRoom) {
-            console.warn("No room selected for loading total hours");
-            return;
-        }
+        if (!roomId) return;
 
-        const scheduleSnap = await db.collection("schedules")
-            .where("roomCode", "==", activeRoom)
-            .limit(1)
-            .get();
-            
-        if (scheduleSnap.empty) {
-            console.warn("No schedule found for the selected room");
-            return;
+        // Check if it's a supervisor room
+        const geofenceSnap = await db.collection("rooms").doc(roomId).collection("geofences").limit(1).get();
+        const isSupervisorRoom = !geofenceSnap.empty;
+
+        // Fetch schedule totalHours
+        const entriesSnap = await db.collection("rooms").doc(roomId).collection("schedules").orderBy("createdAt", "desc").get();
+        let scheduleDoc;
+        if (isSupervisorRoom) {
+            // For supervisor rooms, take the latest shared schedule
+            scheduleDoc = entriesSnap.docs[0];
+        } else {
+            // For non-supervisor rooms, find by user uid
+            scheduleDoc = entriesSnap.docs.find(doc => doc.id === auth.currentUser.uid);
         }
-        
-        const scheduleData = scheduleSnap.docs[0].data();
-        const totalHours = scheduleData.totalHours || 0;
-        globalTotalHours = totalHours;
+        if (scheduleDoc) {
+            globalTotalHours = scheduleDoc.data().totalHours || 0;
+        }
     } catch (err) {
-        console.error("Error loading total hours:", err);
+        console.error("Error loading schedule total hours:", err);
     }
 }
 
-async function loadHoursLeft() {
-    if (!auth.currentUser) return;
-
-    const totalHours = globalTotalHours;
+async function loadHoursLeft(roomId) {
+    if (!auth.currentUser || !roomId) return;
 
     try {
-        const internRef = db.collection("interns_inside").doc(auth.currentUser.uid);
-        const internDoc = await internRef.get();
-
-        let hoursLeft = totalHours; // Default to total hours if no record exists
-
+        const internDoc = await db.collection("rooms").doc(roomId).collection("members").doc(auth.currentUser.uid).get();
+        let progressHours = 0;
         if (internDoc.exists) {
-            const data = internDoc.data();
-            hoursLeft = Math.round(Number(data.hoursLeft) || totalHours); // Round to whole number
+            progressHours = internDoc.data().progressHours || 0;
         }
+
+        const hoursLeft = Math.max(globalTotalHours - progressHours, 0);
 
         const hoursValue = document.getElementById("hoursValue");
         const hoursProgress = document.getElementById("hoursProgress");
 
-        // Only update if elements exist (to prevent errors)
         if (hoursValue && hoursProgress) {
-            // Display hoursLeft on the circle
-            hoursValue.textContent = `${hoursLeft} hrs`;
+            hoursValue.textContent = `${hoursLeft.toFixed(1)} hrs`;
 
-            // Progress is how much of totalHours is still left
-            const progressPercent = totalHours > 0 ? (hoursLeft / totalHours) * 100 : 0;
+            const progressPercent = globalTotalHours > 0 ? (progressHours / globalTotalHours) * 100 : 0;
             const degrees = (progressPercent / 100) * 360;
 
-            // Update CSS variable to fill the circle
             hoursProgress.style.setProperty("--progress", `${degrees}deg`);
         }
     } catch (err) {
@@ -1180,78 +1368,39 @@ async function loadRoomProgress() {
     if (!auth.currentUser) return;
 
     try {
-        const internRef = db.collection("interns").doc(auth.currentUser.uid);
-        const internDoc = await internRef.get();
-
-        if (!internDoc.exists) {
-            console.error("Intern record not found.");
-            return;
-        }
-
-        const internData = internDoc.data();
-        const joinedCodes = internData.rooms || [];
-
-        if (joinedCodes.length === 0) {
-            document.getElementById("roomProgressContainer").innerHTML = 
-                "<div class='text-center text-gray-500'>No rooms joined yet.</div>";
-            return;
+        const membersSnap = await db.collectionGroup("members").where("internId", "==", auth.currentUser.uid).get();
+        const joinedRooms = [];
+        for (const doc of membersSnap.docs) {
+          const roomId = doc.ref.parent.parent.id;
+          joinedRooms.push({
+            roomId: roomId,
+            data: doc.data()
+          });
         }
 
         let progressHTML = "";
-        
-        for (const roomCode of joinedCodes) {
+
+        for (const { roomId, data: memberData } of joinedRooms) {
             try {
-                // Get room information
-                const roomSnap = await db.collection("rooms")
-                    .where("joinCode", "==", roomCode)
-                    .limit(1)
-                    .get();
+                const roomDoc = await db.collection("rooms").doc(roomId).get();
+                if (!roomDoc.exists) continue;
+                const roomData = roomDoc.data();
 
-                if (roomSnap.empty) continue;
+            // Skip supervisor rooms
+            const geofenceSnap = await db.collection("rooms").doc(roomId).collection("geofences").limit(1).get();
+            if (!geofenceSnap.empty) continue;
 
-                const roomData = roomSnap.docs[0].data();
                 const roomName = roomData.roomName || "Unnamed Room";
 
-                // Only display rooms that are coordinator's rooms (not supervisor rooms)
-                // Check if this room is a coordinator room by checking if it has a coordinatorEmail field
-                if (!roomData.coordinatorEmail) {
-                    // Skip this room if it is not a coordinator room
-                    continue;
-                }
-
-                // Get schedule information for total hours
-                const scheduleSnap = await db.collection("schedules")
-                    .where("roomCode", "==", roomCode)
-                    .limit(1)
-                    .get();
-
                 let totalHours = 0;
-                let hoursCompleted = 0;
-                let progressPercent = 0;
-
-                if (!scheduleSnap.empty) {
-                    const scheduleData = scheduleSnap.docs[0].data();
-                    totalHours = scheduleData.totalHours || 0;
+                const entriesSnap = await db.collection("rooms").doc(roomId).collection("schedules").orderBy("createdAt", "desc").get();
+                const scheduleDoc = entriesSnap.docs.find(doc => doc.id === auth.currentUser.uid);
+                if (scheduleDoc) {
+                    totalHours = scheduleDoc.data().totalHours || 0;
                 }
 
-                // Get intern's progress for this room
-                const internProgressRef = db.collection("interns_inside").doc(auth.currentUser.uid);
-                const internProgressDoc = await internProgressRef.get();
-
-                if (internProgressDoc.exists) {
-                    const progressData = internProgressDoc.data();
-                    // Check if roomCode matches the current roomCode
-                    if (progressData.roomCode === roomCode) {
-                        // Calculate hours completed based on hours left
-                        const hoursLeftValue = (progressData.hoursLeft === undefined || progressData.hoursLeft === null) ? totalHours : progressData.hoursLeft;
-                        hoursCompleted = totalHours - hoursLeftValue;
-                        progressPercent = totalHours > 0 ? (hoursCompleted / totalHours) * 100 : 0;
-                    } else {
-                        // If no matching roomCode, set progress to 0
-                        hoursCompleted = 0;
-                        progressPercent = 0;
-                    }
-                }
+                const progressHours = memberData.progressHours || 0;
+                const progressPercent = totalHours > 0 ? (progressHours / totalHours) * 100 : 0;
 
                 progressHTML += `
                     <div class="bg-gray-50 p-4 rounded-lg shadow-sm border">
@@ -1263,106 +1412,44 @@ async function loadRoomProgress() {
                         </div>
                         <div class="progress-label text-center mt-2">
                             <div class="text-sm text-gray-600">
-                                ${hoursCompleted.toFixed(1)} / ${totalHours} hours
+                                ${progressHours.toFixed(1)} / ${totalHours} hours
                             </div>
                             <div class="text-xs text-gray-400 mt-1">
-                                Room Code: ${roomCode}
+                                Room ID: ${roomId}
                             </div>
                         </div>
                     </div>
                 `;
             } catch (err) {
-                console.error(`Error loading progress for room ${roomCode}:`, err);
-                progressHTML += `
-                    <div class="bg-gray-50 p-4 rounded-lg shadow-sm border">
-                        <h3 class="text-lg font-semibold text-red-600 mb-3 text-center">Error Loading Room</h3>
-                        <div class="text-center text-gray-500">
-                            Failed to load progress data
-                        </div>
-                    </div>
-                `;
+                console.error(`Error loading progress for room ${roomId}:`, err);
             }
         }
 
         document.getElementById("roomProgressContainer").innerHTML = progressHTML;
-
-    } catch (err) {
-        console.error("Failed to load room progress:", err);
-        document.getElementById("roomProgressContainer").innerHTML = 
-            "<div class='text-center text-red-500'>❌ Failed to load room progress</div>";
+    } catch (error) {
+        console.error('Error loading room progress:', error);
+        // Gracefully handle permission errors by showing empty progress
+        document.getElementById("roomProgressContainer").innerHTML = "<p class='text-gray-500'>Unable to load progress data.</p>";
     }
 }
 
-// Function to update progress for a specific room
-async function updateRoomProgress(roomCode) {
+async function refreshBtn(roomId) {
     try {
-        // Get schedule information for total hours
-        const scheduleSnap = await db.collection("schedules")
-            .where("roomCode", "==", roomCode)
+        if (!roomId) return;
+
+        // Check if there's a recent check-in without check-out
+        const eventsSnap = await db.collection("rooms").doc(roomId).collection("attendanceEvents")
+            .where("internId", "==", auth.currentUser.uid)
+            .orderBy("timestamp", "desc")
             .limit(1)
             .get();
-
-        if (scheduleSnap.empty) return;
-
-        const scheduleData = scheduleSnap.docs[0].data();
-        const totalHours = scheduleData.totalHours || 0;
-
-        // Get intern's progress for this room
-        const internProgressRef = db.collection("interns_inside").doc(auth.currentUser.uid);
-        const internProgressDoc = await internProgressRef.get();
-
-        let hoursLeft = totalHours;
-        let progressPercent = 0;
-
-        if (internProgressDoc.exists) {
-            const progressData = internProgressDoc.data();
-            // Check if roomCode matches the current roomCode
-            if (progressData.roomCode === roomCode) {
-                hoursLeft = progressData.hoursLeft || totalHours;
-                // Calculate progress percentage based on hours completed
-                const hoursCompleted = totalHours - hoursLeft;
-                progressPercent = totalHours > 0 ? (hoursCompleted / totalHours) * 100 : 0;
-            }
-        }
-
-        // Find and update the specific room progress element
-        const roomProgressElements = document.querySelectorAll('#roomProgressContainer > div');
-        for (const element of roomProgressElements) {
-            const codeElement = element.querySelector('.text-xs.text-gray-400');
-            if (codeElement && codeElement.textContent.includes(roomCode)) {
-                const progressElement = element.querySelector('.circular-progress');
-                const valueElement = element.querySelector('.progress-value');
-                const hoursElement = element.querySelector('.text-sm.text-gray-600');
-                
-                if (progressElement && valueElement && hoursElement) {
-                    // Set the progress based on hours completed (totalHours - hoursLeft)
-                    const hoursCompleted = totalHours - hoursLeft;
-                    progressElement.style.setProperty('--progress', `${progressPercent * 3.6}deg`);
-                    valueElement.textContent = `${Math.round(progressPercent)}%`;
-                    hoursElement.textContent = `${hoursCompleted.toFixed(1)} / ${totalHours} hours`;
-                }
-                break;
-            }
-        }
-
-    } catch (err) {
-        console.error(`Error updating progress for room ${roomCode}:`, err);
-    }
-}
-
-async function refreshBtn() {
-    try {
-        const internRef = db.collection("interns_inside").doc(auth.currentUser.uid);
-        const internDoc = await internRef.get();
 
         const timeInBtn = document.getElementById("timeInButton");
         const timeOutBtn = document.getElementById("timeOutButton");
 
-        if (internDoc.exists) {
-            const data = internDoc.data();
-            const status = data.status;
-
-            if (status === "inside") {
+        if (!eventsSnap.empty) {
+            const lastEvent = eventsSnap.docs[0].data();
+            if (lastEvent.type === "CHECK_IN") {
                 timeInBtn.disabled = true;
                 timeOutBtn.disabled = false;
                 timeInBtn.style.opacity = 0.5;
@@ -1374,17 +1461,14 @@ async function refreshBtn() {
                 timeOutBtn.style.opacity = 0.5;
             }
         } else {
-            // No record exists, so intern hasn't timed in yet
             timeInBtn.disabled = false;
             timeOutBtn.disabled = true;
             timeInBtn.style.opacity = 1;
             timeOutBtn.style.opacity = 0.5;
         }
-
-
-
     } catch (error) {
         alert("Error fetching status:" + error);
+        console.log("DEBUG: geofenceSnap empty:", error);
     }
 }
 
@@ -1412,9 +1496,14 @@ function toggleSidebar() {
 mobileMenuButton.addEventListener("click", toggleSidebar);
 overlay.addEventListener("click", toggleSidebar);
 
-window.addEventListener("DOMContentLoaded", loadTotalHours);
+window.addEventListener("DOMContentLoaded", () => {
+    if (auth.currentUser) {
+        const container = document.getElementById("roomScheduleContainer");
+        const activeRoom = container.dataset.activeRoom;
+        loadTotalHours(activeRoom);
+    }
+});
 
-// Close sidebar when clicking outside on mobile
 window.addEventListener("resize", function () {
     const sidebar = document.getElementById("sidebar");
     if (window.innerWidth >= 1024) {
@@ -1422,8 +1511,6 @@ window.addEventListener("resize", function () {
         overlay.classList.add("hidden");
     }
 });
-
-
 
 async function joinRoom() {
     const joinCode = document.getElementById("joinRoomInput").value.trim();
@@ -1435,7 +1522,6 @@ async function joinRoom() {
     }
 
     try {
-        // Validate room
         const roomSnap = await db.collection("rooms")
             .where("joinCode", "==", joinCode)
             .limit(1)
@@ -1448,87 +1534,35 @@ async function joinRoom() {
 
         const roomDoc = roomSnap.docs[0];
         const roomData = roomDoc.data();
-        const roomRef = roomDoc.ref;
+        const roomId = roomDoc.id;
 
-        // Add joinCode to intern's rooms array
-        const internRef = db.collection("interns").doc(auth.currentUser.uid);
-        await internRef.update({
-            rooms: firebase.firestore.FieldValue.arrayUnion(joinCode)
-        });
-
-        // Add intern's email to room's interns array
-        await roomRef.update({
-            interns: firebase.firestore.FieldValue.arrayUnion(auth.currentUser.email)
-        });
-
-        // Check if intern_data document already exists for this intern and room
-        const existingInternDataSnap = await db.collection("intern_data")
-            .where("intern_email", "==", auth.currentUser.email)
-            .where("room_code", "==", joinCode)
-            .limit(1)
-            .get();
-
-        // Save to intern_data collection
-        const geofenceSnap = await db.collection("geofences").doc(joinCode).get();
-
-        if (geofenceSnap.exists) {
-            const geofence = geofenceSnap.data();
-
-            const internData = {
-                intern_email: auth.currentUser.email,
-                room_code: joinCode,
-                type: "supervisor",
-                geofence: geofence
-            };
-
-            if (!existingInternDataSnap.empty) {
-                // Update existing document
-                const existingDocRef = existingInternDataSnap.docs[0].ref;
-                await existingDocRef.update(internData);
-            } else {
-                // Create new document
-                await db.collection("intern_data").add(internData);
-            }
-        } else {
-            const scheduleSnap = await db.collection("schedules").where("roomCode", "==", joinCode).limit(1).get();
-
-            if (!scheduleSnap.empty) {
-                const schedule = scheduleSnap.docs[0].data();
-
-                const internData = {
-                    intern_email: auth.currentUser.email,
-                    room_code: joinCode,
-                    type: "coordinator",
-                    schedule: schedule
-                };
-
-                if (!existingInternDataSnap.empty) {
-                    // Update existing document
-                    const existingDocRef = existingInternDataSnap.docs[0].ref;
-                    await existingDocRef.update(internData);
-                } else {
-                    // Create new document
-                    await db.collection("intern_data").add(internData);
-                }
-            }
+        // Check if already member
+        const internSnap = await db.collection("rooms").doc(roomId).collection("members").doc(auth.currentUser.uid).get();
+        if (internSnap.exists) {
+            status.textContent = "❌ Already joined this room.";
+            return;
         }
 
+        // Add intern
+        await db.collection("rooms").doc(roomId).collection("members").doc(auth.currentUser.uid).set({
+            internId: auth.currentUser.uid,
+            email: auth.currentUser.email,
+            name: userData.name || "Intern Name",
+            joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            progressHours: 0,
+            status: "active"
+        });
+
         closeJoinRoomModal();
-        // Save intern data after joining
-        await saveInternData();
-        // Reload the page after successful room join
-        location.reload();
         fetchJoinedRooms();
+        location.reload();
     } catch (err) {
         console.error("Failed to join room:", err);
         status.textContent = "❌ Failed to join room. " + err;
     }
 }
 
-
-
 function openJoinRoomModal() {
-
     const modal = document.getElementById("joinRoomModal");
     const content = modal.querySelector('.modal-content');
     modal.style.display = "flex";
@@ -1551,8 +1585,6 @@ function closeJoinRoomModal() {
     }, { once: true });
 }
 
-
-
 function toggleJoinRoomButton() {
     const container = document.getElementById("roomScheduleContainer");
     const joinButton = document.querySelector(".fixed.bottom-6.right-10");
@@ -1571,576 +1603,369 @@ function backToRooms() {
     container.classList.add("hidden");
     container.dataset.activeRoom = "";
 
-    // Clear kebab menu
     document.getElementById('roomScheduleKebabMenu').innerHTML = '';
 
-    // Show room selection UI elements
     document.getElementById("joinRoomInput").parentElement.style.display = "flex";
     document.getElementById("joinedRoomsList").style.display = "block";
     document.getElementById("internRooms").parentElement.style.display = "block";
 
-    // Show the join room button
     toggleJoinRoomButton();
 }
 
 async function fetchJoinedRooms() {
-  const internRoomsDiv = document.getElementById("internRooms");
-  internRoomsDiv.innerHTML = "<p class='text-gray-500'>Loading rooms...</p>";
+    const internRoomsDiv = document.getElementById("internRooms");
+    internRoomsDiv.innerHTML = "<p class='text-gray-500'>Loading rooms...</p>";
 
-  try {
-    const internRef = db.collection("interns").doc(auth.currentUser.uid);
-    const internDoc = await internRef.get();
-    if (!internDoc.exists) {
-      internRoomsDiv.innerHTML = "<p class='text-gray-500'>No intern record found.</p>";
-      return;
+    try {
+        const membersSnap = await db.collectionGroup("members").where("internId", "==", auth.currentUser.uid).get();
+        const joinedRooms = [];
+        for (const doc of membersSnap.docs) {
+          const roomId = doc.ref.parent.parent.id;
+          joinedRooms.push({
+            roomId: roomId,
+            data: doc.data()
+          });
+        }
+
+        const noRoomsMessage = document.getElementById("noRoomsMessage");
+
+        internRoomsDiv.innerHTML = "";
+
+        let roomCount = 0;
+        for (const { roomId } of joinedRooms) {
+            const roomDoc = await db.collection("rooms").doc(roomId).get();
+            if (!roomDoc.exists) continue;
+            const roomData = roomDoc.data();
+
+            // Skip supervisor rooms
+            const geofenceSnap = await db.collection("rooms").doc(roomId).collection("geofences").limit(1).get();
+            if (!geofenceSnap.empty) continue;
+
+            const card = document.createElement("div");
+            card.className = "border rounded-lg shadow-md p-4 hover:shadow-lg transition cursor-pointer mb-3";
+            card.style.backgroundColor = "#4174b8";
+            card.id = `room-card-${roomId}`;
+
+            const roomName = roomData.roomName || "Unnamed Room";
+
+            let roomDescription = "Not found";
+            if (roomData.coordinatorEmail) {
+                try {
+                    const coordSnap = await db.collection("coordinators")
+                        .where("email", "==", roomData.coordinatorEmail)
+                        .limit(1)
+                        .get();
+                    if (!coordSnap.empty) {
+                        const coordData = coordSnap.docs[0].data();
+                        roomDescription = coordData.fullName || "Unnamed Coordinator";
+                    }
+                } catch (err) {
+                    console.error("Error fetching coordinator:", err);
+                }
+            }
+
+            card.innerHTML = `
+                <img src="/images/indexbg.webp" alt="Room Image" class="w-full h-30 object-fill rounded-lg mb-4 bg-blue-700">
+                <div class="flex justify-between items-start mb-2">
+                    <h3 class="text-lg font-bold text-white flex-1">${roomName}</h3>
+                    <div class="kebab-menu relative">
+                        <button class="kebab-button" onclick="toggleKebabMenu('${roomId}', event)">
+                        <i class="fas fa-ellipsis-v" style="color: white;"></i>
+                      </button>
+                      <div id="popover-${roomId}" class="popover">
+                        <button class="popover-item leave-room" onclick="leaveRoom('${roomId}')">
+                          <i class="fas fa-sign-out-alt mr-2"></i>Leave Room
+                        </button>
+                      </div>
+                    </div>
+                </div>
+                <p class="text-xs" style="color: #DBDBDB;">Code: ${roomData.joinCode || roomId}</p>
+                <p class="text-xs mt-2" style="color: #DBDBDB;">${roomDescription}</p>
+            `;
+
+            internRoomsDiv.appendChild(card);
+            roomCount++;
+
+            card.addEventListener("click", () => {
+                const container = document.getElementById("roomScheduleContainer");
+                if (container.dataset.activeRoom === roomId) {
+                    container.classList.toggle("hidden");
+                    document.getElementById("joinRoomInput").parentElement.style.display = "flex";
+                    document.getElementById("joinedRoomsList").style.display = "block";
+                    document.getElementById("internRooms").parentElement.style.display = "block";
+                    toggleJoinRoomButton();
+                } else {
+                    container.dataset.activeRoom = roomId;
+                    container.classList.remove("hidden");
+
+                    document.getElementById("joinRoomInput").parentElement.style.display = "none";
+                    document.getElementById("joinedRoomsList").style.display = "none";
+                    document.getElementById("internRooms").parentElement.style.display = "none";
+
+                    displayRoomSchedule(roomId);
+                    toggleJoinRoomButton();
+                }
+            });
+        }
+
+        if (roomCount > 0) {
+            noRoomsMessage.classList.add("hidden");
+        } else {
+            noRoomsMessage.classList.remove("hidden");
+        }
+    } catch (err) {
+        console.error("Error loading rooms:", err);
+        internRoomsDiv.innerHTML = "<p class='text-red-500'>❌ Failed to load rooms.</p>";
+    }
+}
+
+function toggleKebabMenu(roomId, event) {
+    event.stopPropagation();
+
+    const allPopovers = document.querySelectorAll('.popover');
+    allPopovers.forEach(popover => {
+        if (popover.id !== `popover-${roomId}`) {
+            popover.classList.remove('show');
+        }
+    });
+
+    const popover = document.getElementById(`popover-${roomId}`);
+    if (popover) {
+        popover.classList.toggle('show');
+    }
+}
+
+async function leaveRoom(roomId) {
+    if (!confirm(`Are you sure you want to leave this room (${roomId})?`)) {
+        return;
     }
 
-    const joinedCodes = internDoc.data().rooms || [];
+    try {
+        await db.collection("rooms").doc(roomId).collection("members").doc(auth.currentUser.uid).delete();
 
-    const noRoomsMessage = document.getElementById("noRoomsMessage");
-
-    internRoomsDiv.innerHTML = "";
-
-    for (const code of joinedCodes) {
-      const roomSnap = await db.collection("rooms")
-        .where("joinCode", "==", code)
-        .limit(1)
-        .get();
-
-      if (!roomSnap.empty) {
-        const room = roomSnap.docs[0].data();
-        console.log("Joined room data:", room);
-
-        // Only display coordinator rooms, skip supervisor rooms
-        if (room.supervisorEmail) {
-          continue;
+        const popover = document.getElementById(`popover-${roomId}`);
+        if (popover) {
+            popover.classList.remove('show');
         }
 
-        const card = document.createElement("div");
-        card.className = "border rounded-lg shadow-md p-4 hover:shadow-lg transition cursor-pointer mb-3";
-        card.style.backgroundColor = "#4174b8";
-        card.id = `room-card-${room.joinCode || room.roomCode || code}`;
+        fetchJoinedRooms();
 
-        // Handle different field name variations
-        const roomName = room.roomName || "Unnamed Room";
-        const roomCodeDisplay = room.joinCode || code;
-
-        // Fetch coordinator name
-        let roomDescription = "Not found";
-        if (room.coordinatorEmail) {
-          try {
-            const coordSnap = await db.collection("coordinators")
-              .where("email", "==", room.coordinatorEmail)
-              .limit(1)
-              .get();
-            if (!coordSnap.empty) {
-              const coordData = coordSnap.docs[0].data();
-              roomDescription = coordData.fullName || "Unnamed Coordinator";
-            }
-          } catch (err) {
-            console.error("Error fetching coordinator:", err);
-          }
-        }
-        
-        card.innerHTML = `
-          <img src="/images/indexbg.webp" alt="Room Image" class="w-full h-30 object-fill rounded-lg mb-4 bg-blue-700">
-          <div class="flex justify-between items-start mb-2">
-            <h3 class="text-lg font-bold text-white flex-1">${roomName}</h3>
-            <div class="kebab-menu relative">
-                <button class="kebab-button" onclick="toggleKebabMenu('${roomCodeDisplay}', event)">
-                <i class="fas fa-ellipsis-v" style="color: white;"></i>
-              </button>
-              <div id="popover-${roomCodeDisplay}" class="popover">
-                <button class="popover-item leave-room" onclick="leaveRoom('${roomCodeDisplay}')">
-                  <i class="fas fa-sign-out-alt mr-2"></i>Leave Room
-                </button>
-              </div>
-            </div>
-          </div>
-          <p class="text-xs" style="color: #DBDBDB;">Code: ${roomCodeDisplay}</p>
-          <p class="text-xs mt-2" style="color: #DBDBDB;">${roomDescription}</p>
-        `;
-        //<p class="text-sm text-gray-600 mb-2">${roomDescription}</p>
-        //<p class="text-xs text-gray-400 mt-2">${room.supervisorEmail ? 'Supervisor/Principal' : 'Coordinator/Instructor'}</p>
-        internRoomsDiv.appendChild(card);
-
-        // Add click handler to show schedule
-        card.addEventListener("click", () => {
-          const container = document.getElementById("roomScheduleContainer");
-          const roomCode = room.joinCode || room.roomCode || code;
-
-          // If same room is clicked again → hide
-          if (container.dataset.activeRoom === roomCode) {
-            container.classList.toggle("hidden");
-            // Show room selection UI when hiding schedule
+        const container = document.getElementById("roomScheduleContainer");
+        if (container.dataset.activeRoom === roomId) {
+            container.classList.add("hidden");
+            container.dataset.activeRoom = "";
             document.getElementById("joinRoomInput").parentElement.style.display = "flex";
             document.getElementById("joinedRoomsList").style.display = "block";
             document.getElementById("internRooms").parentElement.style.display = "block";
-            // Toggle join room button visibility
             toggleJoinRoomButton();
-          } else {
-            container.dataset.activeRoom = roomCode;
-            container.classList.remove("hidden");
-
-            // Hide room selection UI when showing schedule
-            document.getElementById("joinRoomInput").parentElement.style.display = "none";
-            document.getElementById("joinedRoomsList").style.display = "none";
-            document.getElementById("internRooms").parentElement.style.display = "none";
-
-            displayRoomSchedule(roomCode);
-            // Toggle join room button visibility
-            toggleJoinRoomButton();
-          }
-        });
-      }
-    }
-
-    // Toggle visibility of noRoomsMessage based on whether coordinator rooms are joined
-    // Filter out supervisor rooms from joinedCodes
-    const coordinatorRooms = [];
-    for (const code of joinedCodes) {
-      const roomSnap = await db.collection("rooms")
-        .where("joinCode", "==", code)
-        .limit(1)
-        .get();
-      if (!roomSnap.empty) {
-        const room = roomSnap.docs[0].data();
-        if (!room.supervisorEmail) {
-          coordinatorRooms.push(code);
-        }
-      }
-    }
-    if (coordinatorRooms.length > 0) {
-      noRoomsMessage.classList.add("hidden");
-    } else {
-      noRoomsMessage.classList.remove("hidden");
-    }
-  } catch (err) {
-    console.error("Error loading rooms:", err);
-    internRoomsDiv.innerHTML = "<p class='text-red-500'>❌ Failed to load rooms.</p>";
-  }
-}
-
-// Kebab menu functions
-function toggleKebabMenu(roomCode, event) {
-  event.stopPropagation(); // Prevent card click
-
-  // Close all other popovers first
-  const allPopovers = document.querySelectorAll('.popover');
-  allPopovers.forEach(popover => {
-    if (popover.id !== `popover-${roomCode}`) {
-      popover.classList.remove('show');
-    }
-  });
-
-  // Toggle the current popover
-  const popover = document.getElementById(`popover-${roomCode}`);
-  if (popover) {
-    popover.classList.toggle('show');
-  }
-}
-
-async function leaveRoom(roomCode) {
-  if (!confirm(`Are you sure you want to leave this room (${roomCode})?`)) {
-    return;
-  }
-
-  try {
-    const internRef = db.collection("interns").doc(auth.currentUser.uid);
-
-    // Remove roomCode from intern's rooms array
-    await internRef.update({
-      rooms: firebase.firestore.FieldValue.arrayRemove(roomCode)
-    });
-
-    // Remove intern's email from room's interns array
-    const roomSnap = await db.collection("rooms")
-      .where("joinCode", "==", roomCode)
-      .limit(1)
-      .get();
-
-    if (!roomSnap.empty) {
-      const roomDoc = roomSnap.docs[0];
-      const roomRef = roomDoc.ref;
-
-      await roomRef.update({
-        interns: firebase.firestore.FieldValue.arrayRemove(auth.currentUser.email)
-      });
-    }
-
-    // Check if the room being left is a supervisor room (has geofence)
-    const geofenceSnap = await db.collection("geofences").doc(roomCode).get();
-    const isSupervisorRoom = geofenceSnap.exists;
-
-    // Close the popover
-    const popover = document.getElementById(`popover-${roomCode}`);
-    if (popover) {
-      popover.classList.remove('show');
-    }
-
-    // Refresh the rooms list
-    fetchJoinedRooms();
-
-    // If the current active room is the one being left, hide the schedule
-    const container = document.getElementById("roomScheduleContainer");
-    if (container.dataset.activeRoom === roomCode) {
-      container.classList.add("hidden");
-      container.dataset.activeRoom = "";
-      document.getElementById("joinRoomInput").parentElement.style.display = "flex";
-      document.getElementById("joinedRoomsList").style.display = "block";
-      document.getElementById("internRooms").parentElement.style.display = "block";
-      toggleJoinRoomButton();
-    }
-
-    // If leaving a supervisor room, update supervisor zone status
-    if (isSupervisorRoom) {
-      await checkSupervisorZoneStatus();
-      alert("Successfully left the supervisor room! You have been disconnected from the supervisor zone.");
-    } else {
-      alert("Successfully left the room!");
-      disconnectSupervisorZone();
-      fetchJoinedRooms();
-    }
-  } catch (err) {
-    console.error("Failed to leave room:", err);
-    alert("Failed to leave room. Please try again.");
-  }
-}
-
-// Function to save intern data to intern_data collection
-async function saveInternData() {
-    try {
-        const internEmail = auth.currentUser.email;
-        const internRef = db.collection("interns").doc(auth.currentUser.uid);
-        const internDoc = await internRef.get();
-        if (!internDoc.exists) throw new Error("Intern data not found");
-
-        const internData = internDoc.data();
-        const supervisorEmail = internData.supervisorEmail;
-        const coordinatorCode = internData.coordinatorCode;
-
-        // Find supervisorRoom
-        let supervisorRoom = null;
-        const supervisorRoomSnap = await db.collection("rooms")
-            .where("supervisorEmail", "==", supervisorEmail)
-            .limit(1)
-            .get();
-        if (!supervisorRoomSnap.empty) {
-            supervisorRoom = supervisorRoomSnap.docs[0].data().joinCode;
         }
 
-        // Find coordinatorRoom
-        let coordinatorRoom = null;
-        const coordinatorSnap = await db.collection("coordinators")
-            .where("code", "==", coordinatorCode)
-            .limit(1)
-            .get();
-        if (!coordinatorSnap.empty) {
-            const coordinatorEmail = coordinatorSnap.docs[0].data().email;
-            const coordinatorRoomSnap = await db.collection("rooms")
-                .where("coordinatorEmail", "==", coordinatorEmail)
-                .limit(1)
-                .get();
-            if (!coordinatorRoomSnap.empty) {
-                coordinatorRoom = coordinatorRoomSnap.docs[0].data().joinCode;
-            }
-        }
-
-        // Fetch internSchedule
-        let internSchedule = [];
-        if (coordinatorRoom) {
-            const scheduleSnap = await db.collection("schedules")
-                .where("roomCode", "==", coordinatorRoom)
-                .get();
-            internSchedule = scheduleSnap.docs.map(doc => doc.data());
-        }
-
-        // Fetch geofence
-        let geofence = null;
-        if (supervisorRoom) {
-            const geofenceSnap = await db.collection("geofences").doc(supervisorRoom).get();
-            if (geofenceSnap.exists) {
-                geofence = geofenceSnap.data();
-            }
-        }
-
-        // Save to intern_data collection
-        const internDataRef = db.collection("intern_data").doc(internEmail);
-        await internDataRef.set({
-            supervisorRoom: supervisorRoom,
-            coordinatorRoom: coordinatorRoom,
-            internSchedule: internSchedule,
-            geofence: geofence
-        }, { merge: true });
-
-        console.log("Intern data saved successfully");
+        alert("Successfully left the room!");
     } catch (err) {
-        console.error("Failed to save intern data:", err);
+        console.error("Failed to leave room:", err);
+        alert("Failed to leave room. Please try again.");
     }
 }
 
-// Close popovers when clicking outside
 document.addEventListener('click', function(event) {
-  if (!event.target.closest('.kebab-menu')) {
-    const allPopovers = document.querySelectorAll('.popover');
-    allPopovers.forEach(popover => {
-      popover.classList.remove('show');
-    });
-  }
+    if (!event.target.closest('.kebab-menu')) {
+        const allPopovers = document.querySelectorAll('.popover');
+        allPopovers.forEach(popover => {
+            popover.classList.remove('show');
+        });
+    }
 });
 
-
-
 async function setSupervisorZone() {
-  const roomCode = document.getElementById('supervisorRoomCodeInput').value.trim();
-  const setZoneStatus = document.getElementById('setZoneStatus');
-  setZoneStatus.textContent = '';
+    const roomCode = document.getElementById('supervisorRoomCodeInput').value.trim();
+    const setZoneStatus = document.getElementById('setZoneStatus');
+    setZoneStatus.textContent = '';
 
-  // Show spinner and disable button
-  const button = document.getElementById('setZoneButton');
-  const spinner = document.getElementById('setZoneSpinner');
-  const text = document.getElementById('setZoneText');
-  button.disabled = true;
-  spinner.classList.remove('hidden');
-  text.textContent = 'Connecting...';
+    const button = document.getElementById('setZoneButton');
+    const spinner = document.getElementById('setZoneSpinner');
+    const text = document.getElementById('setZoneText');
+    button.disabled = true;
+    spinner.classList.remove('hidden');
+    text.textContent = 'Connecting...';
 
-  if (!roomCode) {
-    setZoneStatus.textContent = 'Please enter a supervisor room code.';
-    setZoneStatus.style.color = 'red';
-    // Hide spinner and enable button
-    button.disabled = false;
-    spinner.classList.add('hidden');
-    text.textContent = 'Set Zone';
-    return;
-  }
-
-  try {
-    // Check if the room exists in "rooms" collection
-    const roomSnap = await db.collection("rooms")
-      .where("joinCode", "==", roomCode)
-      .limit(1)
-      .get();
-
-    if (roomSnap.empty) {
-      setZoneStatus.textContent = 'Room not found with the given code.';
-      setZoneStatus.style.color = 'red';
-      // Hide spinner and enable button
-      button.disabled = false;
-      spinner.classList.add('hidden');
-      text.textContent = 'Set Zone';
-      return;
+    if (!roomCode) {
+        console.log("DEBUG: Zone setting failed: No room code entered");
+        setZoneStatus.textContent = 'Please enter a supervisor room code.';
+        setZoneStatus.style.color = 'red';
+        button.disabled = false;
+        spinner.classList.add('hidden');
+        text.textContent = 'Set Zone';
+        return;
     }
 
-    const roomData = roomSnap.docs[0].data();
-    const roomRef = roomSnap.docs[0].ref;
-    const internEmail = auth.currentUser.email;
+    try {
+        const roomSnap = await db.collection("rooms")
+            .where("joinCode", "==", roomCode)
+            .limit(1)
+            .get();
 
-    // Check if intern's email exists in the room's interns field
-    if (!roomData.interns || !roomData.interns.includes(internEmail)) {
-      // Save intern's email to the room's interns field
-      await roomRef.update({
-        interns: firebase.firestore.FieldValue.arrayUnion(internEmail)
-      });
+        if (roomSnap.empty) {
+            console.log("DEBUG: Zone setting failed: Room not found with code:", roomCode);
+            setZoneStatus.textContent = 'Room not found with the given code.';
+            setZoneStatus.style.color = 'red';
+            button.disabled = false;
+            spinner.classList.add('hidden');
+            text.textContent = 'Set Zone';
+            return;
+        }
+
+        const roomDoc = roomSnap.docs[0];
+        const roomData = roomDoc.data();
+        const roomId = roomDoc.id;
+
+        const geofenceSnap = await db.collection("rooms").doc(roomId).collection("geofences").limit(1).get();
+        if (geofenceSnap.empty) {
+            console.log("DEBUG: Zone setting failed: No geofence found for room:", roomId);
+            setZoneStatus.textContent = 'No geofence found for this supervisor room.';
+            setZoneStatus.style.color = 'red';
+            button.disabled = false;
+            spinner.classList.add('hidden');
+            text.textContent = 'Set Zone';
+            return;
+        }
+
+        const geofenceData = geofenceSnap.docs[0].data();
+
+        // Add intern if not already
+        const internRef = db.collection("rooms").doc(roomId).collection("members").doc(auth.currentUser.uid);
+        const internSnap = await internRef.get();
+        if (!internSnap.exists) {
+            await internRef.set({
+                internId: auth.currentUser.uid,
+                email: auth.currentUser.email,
+                name: userData.name || "Intern Name",
+                joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                progressHours: 0,
+                status: "active"
+            });
+        }
+
+        geofenceCenter = [geofenceData.center.lat, geofenceData.center.lng];
+        geofenceRadius = geofenceData.radius || 100;
+
+        console.log("DEBUG: Zone set successfully with center:", geofenceCenter, "and radius:", geofenceRadius);
+
+        if (map) {
+            if (geofenceCircle) map.removeLayer(geofenceCircle);
+            geofenceCircle = L.circle(geofenceCenter, {
+                radius: geofenceRadius,
+                color: "red",
+                fillColor: "#f03",
+                fillOpacity: 0.3,
+            }).addTo(map);
+            map.setView(geofenceCenter, 17);
+            map.invalidateSize();
+        }
+
+        await fetchJoinedRooms();
+        await checkSupervisorZoneStatus(auth.currentUser);
+
+        setZoneStatus.style.color = 'green';
+        setZoneStatus.textContent = 'Successfully joined supervisor room and set geofence zone.';
+
+        button.disabled = false;
+        spinner.classList.add('hidden');
+        text.textContent = 'Set Zone';
+
+        setTimeout(() => {
+            setZoneStatus.textContent = '';
+        }, 2000);
+
+    } catch (error) {
+        console.log("DEBUG: Zone setting failed:", error.message);
+        console.error('Error setting supervisor zone:', error);
+        setZoneStatus.style.color = 'red';
+        setZoneStatus.textContent = 'Error setting supervisor zone: ' + error.message;
+        button.disabled = false;
+        spinner.classList.add('hidden');
+        text.textContent = 'Set Zone';
     }
-
-    // Add roomCode to intern's rooms array
-    const internRef = db.collection("interns").doc(auth.currentUser.uid);
-    await internRef.update({
-      rooms: firebase.firestore.FieldValue.arrayUnion(roomCode)
-    });
-
-    // Check if geofence exists for this room
-    const geofenceSnap = await db.collection("geofences").doc(roomCode).get();
-    if (!geofenceSnap.exists) {
-      setZoneStatus.textContent = 'No geofence found for this supervisor room.';
-      setZoneStatus.style.color = 'red';
-      // Hide spinner and enable button
-      button.disabled = false;
-      spinner.classList.add('hidden');
-      text.textContent = 'Set Zone';
-      return;
-    }
-
-    const geofenceData = geofenceSnap.data();
-
-    // Check if intern_data document already exists for this intern and room
-    const existingInternDataSnap = await db.collection("intern_data")
-      .where("intern_email", "==", internEmail)
-      .where("room_code", "==", roomCode)
-      .limit(1)
-      .get();
-
-    const internDataPayload = {
-      intern_email: internEmail,
-      room_code: roomCode,
-      type: "supervisor",
-      geofence: geofenceData
-    };
-
-    if (!existingInternDataSnap.empty) {
-      // Update existing document
-      const existingDocRef = existingInternDataSnap.docs[0].ref;
-      await existingDocRef.update(internDataPayload);
-      console.log("🔍 DEBUG setSupervisorZone: Updated existing intern_data");
-    } else {
-      // Create new document
-      await db.collection("intern_data").add(internDataPayload);
-      console.log("🔍 DEBUG setSupervisorZone: Created new intern_data");
-    }
-
-    // Update global geofence variables for immediate use
-    geofenceCenter = [geofenceData.center.lat, geofenceData.center.lng];
-    geofenceRadius = geofenceData.radius || 100;
-
-    // Refresh the map if it exists
-    if (map) {
-      if (geofenceCircle) map.removeLayer(geofenceCircle);
-      geofenceCircle = L.circle(geofenceCenter, {
-        radius: geofenceRadius,
-        color: "red",
-        fillColor: "#f03",
-        fillOpacity: 0.3,
-      }).addTo(map);
-      map.setView(geofenceCenter, 17);
-      map.invalidateSize();
-    }
-
-    // Refresh rooms list to show the newly joined room
-    await fetchJoinedRooms();
-
-    // Update the UI to show connected status
-    await checkSupervisorZoneStatus();
-
-    setZoneStatus.style.color = 'green';
-    setZoneStatus.textContent = 'Successfully joined supervisor room and set geofence zone.';
-
-    // Hide spinner and enable button immediately after success
-    button.disabled = false;
-    spinner.classList.add('hidden');
-    text.textContent = 'Set Zone';
-
-    // Clear the success message after 2 seconds
-    setTimeout(() => {
-        setZoneStatus.textContent = '';
-    }, 2000);
-
-  } catch (error) {
-    console.error('Error setting supervisor zone:', error);
-    setZoneStatus.style.color = 'red';
-    setZoneStatus.textContent = 'Error setting supervisor zone: ' + error.message;
-    // Hide spinner and enable button
-    button.disabled = false;
-    spinner.classList.add('hidden');
-    text.textContent = 'Set Zone';
-  }
 }
 
 async function disconnectSupervisorZone() {
-  if (!confirm('Are you sure you want to disconnect from the supervisor zone?')) {
-    return;
-  }
-
-  try {
-    const internRef = db.collection("interns").doc(auth.currentUser.uid);
-    const internDoc = await internRef.get();
-    if (!internDoc.exists) {
-      alert('Intern record not found.');
-      return;
+    if (!confirm('Are you sure you want to disconnect from the supervisor zone?')) {
+        return;
     }
 
-    const internData = internDoc.data();
-    const joinedCodes = internData.rooms || [];
-
-    // Find supervisor room code
-    let supervisorRoomCode = null;
-    for (const roomCode of joinedCodes) {
-      const roomSnap = await db.collection("rooms").where("joinCode", "==", roomCode).limit(1).get();
-      if (!roomSnap.empty) {
-        const roomData = roomSnap.docs[0].data();
-        if (roomData.supervisorEmail && roomData.interns && roomData.interns.includes(auth.currentUser.email)) {
-          supervisorRoomCode = roomCode;
-          break;
+    try {
+        const membersSnap = await db.collectionGroup("members").where("internId", "==", auth.currentUser.uid).get();
+        let supervisorRoomId = null;
+        for (const doc of membersSnap.docs) {
+            const roomId = doc.ref.parent.parent.id;
+            const geofenceSnap = await db.collection("rooms").doc(roomId).collection("geofences").limit(1).get();
+            if (!geofenceSnap.empty) {
+                supervisorRoomId = roomId;
+                break;
+            }
         }
-      }
+
+        if (!supervisorRoomId) {
+            alert('No supervisor zone found to disconnect from.');
+            return;
+        }
+
+        await db.collection("rooms").doc(supervisorRoomId).collection("members").doc(auth.currentUser.uid).delete();
+
+        await checkSupervisorZoneStatus();
+
+        alert('Successfully disconnected from the supervisor zone.');
+    } catch (error) {
+        console.error('Error disconnecting from supervisor zone:', error);
+        alert('Failed to disconnect from supervisor zone. Please try again.');
     }
-
-    if (!supervisorRoomCode) {
-      alert('No supervisor zone found to disconnect from.');
-      return;
-    }
-
-    // Remove roomCode from intern's rooms array
-    await internRef.update({
-      rooms: firebase.firestore.FieldValue.arrayRemove(supervisorRoomCode)
-    });
-
-    // Remove intern's email from room's interns array
-    const roomSnap = await db.collection("rooms").where("joinCode", "==", supervisorRoomCode).limit(1).get();
-    if (!roomSnap.empty) {
-      const roomDoc = roomSnap.docs[0];
-      const roomRef = roomDoc.ref;
-      await roomRef.update({
-        interns: firebase.firestore.FieldValue.arrayRemove(auth.currentUser.email)
-      });
-    }
-
-    // Update UI to show disconnected status
-    await checkSupervisorZoneStatus();
-
-    alert('Successfully disconnected from the supervisor zone.');
-  } catch (err) {
-    console.error('Failed to disconnect from supervisor zone:', err);
-    alert('Failed to disconnect from supervisor zone. Please try again.');
-  }
 }
 
 function toggleMapModal() {
-  const modal = document.getElementById('mapModal');
-  if (!modal) return;
+    const modal = document.getElementById('mapModal');
+    if (!modal) return;
 
-  const isShowing = modal.style.display === 'flex';
-  modal.style.display = isShowing ? 'none' : 'flex';
+    const isShowing = modal.style.display === 'flex';
+    modal.style.display = isShowing ? 'none' : 'flex';
 
-  if (!isShowing) {
-    // Initialize map for modal
-    setTimeout(() => {
-      if (!window.modalMap || typeof window.modalMap.setView !== 'function') {
-        window.modalMap = L.map('modalMap').setView(geofenceCenter || [10.7502, 121.9324], 15);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-          maxZoom: 19,
-        }).addTo(window.modalMap);
+    if (!isShowing) {
+        setTimeout(() => {
+            if (!window.modalMap || typeof window.modalMap.setView !== 'function') {
+                window.modalMap = L.map('modalMap').setView(geofenceCenter || [10.7502, 121.9324], 15);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                    maxZoom: 19,
+                }).addTo(window.modalMap);
 
-        if (geofenceCenter && geofenceRadius) {
-          if (window.modalGeofenceCircle) {
-            window.modalMap.removeLayer(window.modalGeofenceCircle);
-          }
-          window.modalGeofenceCircle = L.circle(geofenceCenter, {
-            radius: geofenceRadius,
-            color: 'red',
-            fillColor: '#f03',
-            fillOpacity: 0.3,
-          }).addTo(window.modalMap);
-          window.modalMap.fitBounds(window.modalGeofenceCircle.getBounds());
-        }
-      } else {
-        window.modalMap.setView(geofenceCenter || [10.7502, 121.9324], 15);
-        if (window.modalGeofenceCircle) {
-          window.modalMap.removeLayer(window.modalGeofenceCircle);
-        }
-        if (geofenceCenter && geofenceRadius) {
-          window.modalGeofenceCircle = L.circle(geofenceCenter, {
-            radius: geofenceRadius,
-            color: 'red',
-            fillColor: '#f03',
-            fillOpacity: 0.3,
-          }).addTo(window.modalMap);
-          window.modalMap.fitBounds(window.modalGeofenceCircle.getBounds());
-        }
-      }
-      if (window.modalMap && typeof window.modalMap.invalidateSize === 'function') {
-        window.modalMap.invalidateSize();
-      }
-    }, 100);
-  }
+                if (geofenceCenter && geofenceRadius) {
+                    if (window.modalGeofenceCircle) {
+                        window.modalMap.removeLayer(window.modalGeofenceCircle);
+                    }
+                    window.modalGeofenceCircle = L.circle(geofenceCenter, {
+                        radius: geofenceRadius,
+                        color: 'red',
+                        fillColor: '#f03',
+                        fillOpacity: 0.3,
+                    }).addTo(window.modalMap);
+                    window.modalMap.fitBounds(window.modalGeofenceCircle.getBounds());
+                }
+            } else {
+                window.modalMap.setView(geofenceCenter || [10.7502, 121.9324], 15);
+                if (window.modalGeofenceCircle) {
+                    window.modalMap.removeLayer(window.modalGeofenceCircle);
+                }
+                if (geofenceCenter && geofenceRadius) {
+                    window.modalGeofenceCircle = L.circle(geofenceCenter, {
+                        radius: geofenceRadius,
+                        color: 'red',
+                        fillColor: '#f03',
+                        fillOpacity: 0.3,
+                    }).addTo(window.modalMap);
+                    window.modalMap.fitBounds(window.modalGeofenceCircle.getBounds());
+                }
+            }
+            if (window.modalMap && typeof window.modalMap.invalidateSize === 'function') {
+                window.modalMap.invalidateSize();
+            }
+        }, 100);
+    }
 }

@@ -24,6 +24,7 @@ let selectedScheduleIndex = null;
 let coordinatorCode = "";
 let accumulatedHours = 0;
 let timeEntries = [];
+let editingIndex = -1;
 
 // Constants
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -372,99 +373,142 @@ function toggleCustomDays() {
 
 async function saveSchedule() {
     try {
-        const startDate = document.getElementById("startDateInput").value;
         const totalHours = parseFloat(document.getElementById("totalHoursInput").value);
-        const timeMode = document.querySelector('input[name="timeMode"]:checked')?.value;
-        const hoursPerDay = parseFloat(document.getElementById("hoursPerDay").value);
-
-        const allowedDays = Array.from(document.querySelectorAll(".allowedDay:checked")).map(d => d.value);
-        if (allowedDays.length === 0) throw new Error("Select at least one allowed day.");
-
-        let dailyTimes = [];
-        let timeMap = {};
-
-        // Determine start/end times per day
-        if (timeMode === "hoursPerDay") {
-            const startTime = document.getElementById("startTimeHPD").value;
-            if (!startTime || isNaN(hoursPerDay)) throw new Error("Start time and hours per day are required.");
-
-            allowedDays.forEach(day => {
-                let [sh, sm] = startTime.split(":").map(Number);
-                let startMinutes = sh * 60 + sm;
-                let endMinutes = startMinutes + hoursPerDay * 60;
-                endMinutes %= 1440;
-
-                let endHour = Math.floor(endMinutes / 60);
-                let endMin = endMinutes % 60;
-                let endTime = `${String(endHour).padStart(2, "0")}:${String(endMin).padStart(2, "0")}`;
-
-                timeMap[day] = { start: startTime, end: endTime };
-            });
-
-        } else {
-            const startTime = document.getElementById("startTimeET").value;
-            const endTime = document.getElementById("endTimeET").value;
-            if (!startTime || !endTime) throw new Error("Start and end times are required.");
-
-            allowedDays.forEach(day => {
-                timeMap[day] = { start: startTime, end: endTime };
-            });
-        }
-
-        // Compute daily hours
-        const firstDay = allowedDays[0];
-        const [sh, sm] = timeMap[firstDay].start.split(":").map(Number);
-        const [eh, em] = timeMap[firstDay].end.split(":").map(Number);
-        let startTotal = sh * 60 + sm;
-        let endTotal = eh * 60 + em;
-        let diffMinutes = endTotal - startTotal;
-        if (diffMinutes <= 0) diffMinutes += 1440;
-        const hoursPerDayValue = diffMinutes / 60;
-        if (hoursPerDayValue <= 0) throw new Error("Daily hours must be greater than zero.");
-
-        if (!selectedRoomCode) {
-            alert("No room selected.");
-            return;
-        }
-
-        // Compute end date & build dailyTimes array
-        const daysNeeded = Math.ceil(totalHours / hoursPerDayValue);
-        let currentDate = new Date(startDate);
-        let counted = 0;
-
-        while (counted < daysNeeded) {
-            const dayName = currentDate.toLocaleDateString("en-US", { weekday: "short" }).toLowerCase();
-            if (allowedDays.includes(dayName)) {
-                let dateStr = `${currentDate.getMonth()+1}-${currentDate.getDate()}-${currentDate.getFullYear()}`;
-                dailyTimes.push({
-                    date: dateStr,
-                    day: dayName,
-                    start: timeMap[dayName].start,
-                    end: timeMap[dayName].end
-                });
-                counted++;
-            }
-            if (counted < daysNeeded) currentDate.setDate(currentDate.getDate() + 1);
-        }
-
-        const endDate = currentDate.toISOString().split("T")[0];
         const coordinatorEmail = auth.currentUser?.email;
-        if (!coordinatorEmail) throw new Error("User not authenticated.");
+        const coordinatorUid = auth.currentUser?.uid;
+        if (!coordinatorEmail || !coordinatorUid) throw new Error("User not authenticated.");
+        if (!selectedRoomCode) throw new Error("No room selected.");
 
-        // Save as new document (auto-generated ID)
-        await db.collection("schedules").add({
-            startDate,
-            endDate,
-            hpd: timeMode === "hoursPerDay" ? hoursPerDay : null,
-            allowedDays,
-            dailyTimes,
-            totalHours,
-            roomCode: selectedRoomCode,
-            coordinatorEmail,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        const roomSnap = await db.collection("rooms").where("joinCode", "==", selectedRoomCode).limit(1).get();
+        if (roomSnap.empty) throw new Error("Room not found.");
+        const roomDoc = roomSnap.docs[0];
+        const roomData = roomDoc.data();
+        let remainingHours = roomData.remainingHours || 0;
+
+        let daySchedules = [];
+
+        // Build daySchedules
+        if (timeEntries.length > 0) {
+            // Manual time entry method
+            timeEntries.forEach(entry => {
+                daySchedules.push({
+                    date: entry.date,
+                    morningIn: entry.morning ? entry.morning.in : null,
+                    morningOut: entry.morning ? entry.morning.out : null,
+                    afternoonIn: entry.afternoon ? entry.afternoon.in : null,
+                    afternoonOut: entry.afternoon ? entry.afternoon.out : null,
+                    eveningIn: entry.evening ? entry.evening.in : null,
+                    eveningOut: entry.evening ? entry.evening.out : null,
+                    dayTotalHours: entry.dayHours,
+                    totalHours: totalHours,
+                    deductedFrom: `rooms/${selectedRoomCode}.remainingHours`,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    createdBy: coordinatorUid
+                });
+            });
+                } else {
+                    // Automatic schedule method
+                    const startDate = document.getElementById("startDateInput").value;
+                    const timeMode = document.querySelector('input[name="timeMode"]:checked')?.value;
+                    const hoursPerDay = parseFloat(document.getElementById("hoursPerDay").value);
+
+                    const allowedDays = Array.from(document.querySelectorAll(".allowedDay:checked")).map(d => d.value);
+                    if (allowedDays.length === 0) throw new Error("Select at least one allowed day.");
+
+                    let timeMap = {};
+
+                    // Determine start/end times per day
+                    if (timeMode === "hoursPerDay") {
+                        const startTime = document.getElementById("startTimeHPD").value;
+                        if (!startTime || isNaN(hoursPerDay)) throw new Error("Start time and hours per day are required.");
+
+                        allowedDays.forEach(day => {
+                            let [sh, sm] = startTime.split(":").map(Number);
+                            let startMinutes = sh * 60 + sm;
+                            let endMinutes = startMinutes + hoursPerDay * 60;
+                            endMinutes %= 1440;
+
+                            let endHour = Math.floor(endMinutes / 60);
+                            let endMin = endMinutes % 60;
+                            let endTime = `${String(endHour).padStart(2, "0")}:${String(endMin).padStart(2, "0")}`;
+
+                            timeMap[day] = { start: startTime, end: endTime };
+                        });
+                    } else {
+                        const startTime = document.getElementById("startTimeET").value;
+                        const endTime = document.getElementById("endTimeET").value;
+                        if (!startTime || !endTime) throw new Error("Start and end times are required.");
+
+                        allowedDays.forEach(day => {
+                            timeMap[day] = { start: startTime, end: endTime };
+                        });
+                    }
+
+                    // Compute daily hours
+                    const firstDay = allowedDays[0];
+                    const [sh, sm] = timeMap[firstDay].start.split(":").map(Number);
+                    const [eh, em] = timeMap[firstDay].end.split(":").map(Number);
+                    let startTotal = sh * 60 + sm;
+                    let endTotal = eh * 60 + em;
+                    let diffMinutes = endTotal - startTotal;
+                    if (diffMinutes <= 0) diffMinutes += 1440;
+                    const hoursPerDayValue = diffMinutes / 60;
+                    if (hoursPerDayValue <= 0) throw new Error("Daily hours must be greater than zero.");
+
+                    // Build dailyTimes array
+                    const daysNeeded = Math.ceil(totalHours / hoursPerDayValue);
+                    let currentDate = new Date(startDate);
+                    let counted = 0;
+                    let remaining = totalHours;
+
+                    while (counted < daysNeeded) {
+                        const dayName = currentDate.toLocaleDateString("en-US", { weekday: "short" }).toLowerCase();
+                        if (allowedDays.includes(dayName)) {
+                            const todaysHours = Math.min(hoursPerDayValue, remaining);
+                            remaining -= todaysHours;
+                            const end = TimeUtils.addHoursToTime(timeMap[dayName].start, todaysHours);
+                            let dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth()+1).padStart(2,'0')}-${String(currentDate.getDate()).padStart(2,'0')}`;
+                            daySchedules.push({
+                                date: dateStr,
+                                morningIn: timeMap[dayName].start,
+                                morningOut: end,
+                                afternoonIn: null,
+                                afternoonOut: null,
+                                eveningIn: null,
+                                eveningOut: null,
+                                dayTotalHours: todaysHours,
+                                totalHours: totalHours,
+                                deductedFrom: `rooms/${selectedRoomCode}.remainingHours`,
+                                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                                createdBy: coordinatorUid
+                            });
+                            counted++;
+                        }
+                        if (counted < daysNeeded) currentDate.setDate(currentDate.getDate() + 1);
+                    }
+        }
+
+        // Calculate total to deduct
+        const totalToDeduct = daySchedules.reduce((sum, d) => sum + d.dayTotalHours, 0);
+
+        // Save each day schedule in batch
+        const batch = db.batch();
+        daySchedules.forEach(dayData => {
+            const ref = roomDoc.ref.collection("schedules").doc();
+            batch.set(ref, dayData);
         });
+        await batch.commit();
+
+        // Deduct from remaining hours
+        await roomDoc.ref.update({ remainingHours: remainingHours - totalToDeduct });
 
         alert("Schedule saved successfully!");
+        // Reset manual entries after save
+        accumulatedHours = 0;
+        timeEntries = [];
+        updateProgressBar(0, totalHours);
+        updateTimeEntryHistory();
+        closeScheduleReviewModal();
         refreshScheduleDetails(); // Update UI to reflect new schedule
     } catch (err) {
         alert("Error: " + err.message);
@@ -508,18 +552,161 @@ function logoutAndReset() {
 }
 
 // ======= Modal open/close =======
-async function openEditScheduleModal() {
-    // Pre-select Mon–Fri by default for sanity
-    document
-        .getElementById("scheduleInputModal")
-        .classList.remove("hidden");
-    document.getElementById("scheduleInputModal").classList.add("flex");
+async function openEditScheduleModal(date) {
+    // Find the schedule for the given date
+    const schedule = schedules.find(s => s.date === date);
+    if (!schedule) {
+        alert("Schedule not found.");
+        return;
+    }
+
+    // Populate the modal with schedule data
+    document.getElementById("editScheduleDate").value = date;
+    document.getElementById("editMorningIn").value = schedule.morningIn || "";
+    document.getElementById("editMorningOut").value = schedule.morningOut || "";
+    document.getElementById("editAfternoonIn").value = schedule.afternoonIn || "";
+    document.getElementById("editAfternoonOut").value = schedule.afternoonOut || "";
+    document.getElementById("editEveningIn").value = schedule.eveningIn || "";
+    document.getElementById("editEveningOut").value = schedule.eveningOut || "";
+
+    // Store the date for saving
+    window.editingScheduleDate = date;
+
+    // Show the modal
+    const modal = document.getElementById("editScheduleModal");
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
 }
 
 function closeScheduleInputModal() {
     document.getElementById("scheduleInputModal").classList.add("hidden");
     document.getElementById("scheduleInputModal").classList.remove("flex");
     clearInputErrors();
+}
+
+function closeEditScheduleModal() {
+    const modal = document.getElementById("editScheduleModal");
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+}
+
+async function saveEditedSchedule() {
+    const date = window.editingScheduleDate;
+    if (!date) {
+        alert("No schedule selected for editing.");
+        return;
+    }
+
+    const morningIn = document.getElementById("editMorningIn").value;
+    const morningOut = document.getElementById("editMorningOut").value;
+    const afternoonIn = document.getElementById("editAfternoonIn").value;
+    const afternoonOut = document.getElementById("editAfternoonOut").value;
+    const eveningIn = document.getElementById("editEveningIn").value;
+    const eveningOut = document.getElementById("editEveningOut").value;
+
+    // Validate times
+    if ((morningIn && !morningOut) || (!morningIn && morningOut)) {
+        alert("Morning times must be both filled or both empty.");
+        return;
+    }
+    if ((afternoonIn && !afternoonOut) || (!afternoonIn && afternoonOut)) {
+        alert("Afternoon times must be both filled or both empty.");
+        return;
+    }
+    if ((eveningIn && !eveningOut) || (!eveningIn && eveningOut)) {
+        alert("Evening times must be both filled or both empty.");
+        return;
+    }
+
+    // Calculate new total hours
+    let newTotalHours = 0;
+    if (morningIn && morningOut) {
+        const morningHours = TimeUtils.hoursBetween(morningIn, morningOut);
+        if (morningHours !== null) newTotalHours += morningHours;
+    }
+    if (afternoonIn && afternoonOut) {
+        const afternoonHours = TimeUtils.hoursBetween(afternoonIn, afternoonOut);
+        if (afternoonHours !== null) newTotalHours += afternoonHours;
+    }
+    if (eveningIn && eveningOut) {
+        const eveningHours = TimeUtils.hoursBetween(eveningIn, eveningOut);
+        if (eveningHours !== null) newTotalHours += eveningHours;
+    }
+
+    try {
+        // Find the schedule document
+        const roomSnap = await db.collection("rooms").where("joinCode", "==", selectedRoomCode).limit(1).get();
+        if (roomSnap.empty) throw new Error("Room not found.");
+        const roomDoc = roomSnap.docs[0];
+        const schedulesSnap = await roomDoc.ref.collection("schedules").where("date", "==", date).limit(1).get();
+        if (schedulesSnap.empty) throw new Error("Schedule not found.");
+
+        const scheduleDoc = schedulesSnap.docs[0];
+        const scheduleData = schedulesSnap.docs[0].data();
+
+        // Enforce dayTotalHours limit: newTotalHours must not exceed original dayTotalHours
+        const originalDayTotalHours = scheduleData.dayTotalHours || 0;
+        if (newTotalHours > originalDayTotalHours) {
+            alert(`Total hours for the day cannot exceed the original value of ${originalDayTotalHours} hours.`);
+            return;
+        }
+        if (newTotalHours < originalDayTotalHours) {
+            alert(`Total hours for the day cannot be less than the original value of ${originalDayTotalHours} hours.`);
+            return;
+        }
+
+        await scheduleDoc.ref.update({
+            morningIn: morningIn || null,
+            morningOut: morningOut || null,
+            afternoonIn: afternoonIn || null,
+            afternoonOut: afternoonOut || null,
+            eveningIn: eveningIn || null,
+            eveningOut: eveningOut || null,
+            dayTotalHours: newTotalHours
+        });
+
+        alert("Schedule updated successfully!");
+        closeEditScheduleModal();
+        refreshScheduleDetails(); // Refresh the UI
+    } catch (error) {
+        console.error("Error updating schedule:", error);
+        alert("Failed to update schedule.");
+    }
+}
+
+async function deleteSchedule(date) {
+    if (!confirm(`Are you sure you want to delete the schedule for ${date}?`)) {
+        return;
+    }
+
+    try {
+        // Find the room document
+        const roomSnap = await db.collection("rooms").where("joinCode", "==", selectedRoomCode).limit(1).get();
+        if (roomSnap.empty) throw new Error("Room not found.");
+        const roomDoc = roomSnap.docs[0];
+        const roomData = roomDoc.data();
+
+        // Find the schedule document
+        const schedulesSnap = await roomDoc.ref.collection("schedules").where("date", "==", date).limit(1).get();
+        if (schedulesSnap.empty) throw new Error("Schedule not found.");
+        const scheduleDoc = schedulesSnap.docs[0];
+        const scheduleData = scheduleDoc.data();
+
+        const dayTotalHours = scheduleData.dayTotalHours || 0;
+
+        // Delete the schedule document
+        await scheduleDoc.ref.delete();
+
+        // Add back the hours to remainingHours
+        const newRemainingHours = (roomData.remainingHours || 0) + dayTotalHours;
+        await roomDoc.ref.update({ remainingHours: newRemainingHours });
+
+        alert("Schedule deleted successfully!");
+        refreshScheduleDetails(); // Refresh the UI
+    } catch (error) {
+        console.error("Error deleting schedule:", error);
+        alert("Failed to delete schedule.");
+    }
 }
 
 // ======= Modal 3: Edit Intern Schedule open/close =======
@@ -661,12 +848,12 @@ async function updateInternSchedule() {
             showEditErr("editHpdError", "Provide Start Time and positive Hours per Day.");
             hasError = true;
         } else {
-            dailyEnd = addHoursToTime(dailyStart, dailyHours);
+            dailyEnd = TimeUtils.addHoursToTime(dailyStart, dailyHours);
         }
     } else {
         const st = document.getElementById("editStartTimeET").value;
         const et = document.getElementById("editEndTimeET").value;
-        const diff = hoursBetween(st, et);
+        const diff = TimeUtils.hoursBetween(st, et);
         if (!st || !et || diff === null || !(diff > 0)) {
             showEditErr("editEtError", "Provide valid Start and End times (End must be after Start; overnight allowed).");
             hasError = true;
@@ -792,32 +979,6 @@ function clearInputErrors() {
     });
 }
 
-function parseHHMM(str) {
-    if (!str || !/^\d{2}:\d{2}$/.test(str)) return null;
-    const [h, m] = str.split(":").map(Number);
-    if (isNaN(h) || isNaN(m)) return null;
-    return { h, m };
-}
-
-function hoursBetween(startStr, endStr) {
-    const s = parseHHMM(startStr),
-        e = parseHHMM(endStr);
-    if (!s || !e) return null;
-    let diff = e.h + e.m / 60 - (s.h + s.m / 60);
-    if (diff < 0) diff += 24; // naive overnight support
-    return diff;
-}
-
-function addHoursToTime(startStr, hours) {
-    const s = parseHHMM(startStr);
-    if (!s) return null;
-    const total = s.h + s.m / 60 + hours;
-    const wrapped = ((total % 24) + 24) % 24;
-    const hh = Math.floor(wrapped);
-    const mm = Math.round((wrapped - hh) * 60);
-    return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
-}
-
 // Manual entry functions
 function addTimeEntry() {
     const totalHours = parseFloat(document.getElementById("totalHoursInput").value);
@@ -835,8 +996,8 @@ function addTimeEntry() {
         return;
     }
 
-    // Check if date already exists
-    if (timeEntries.some(e => e.date === date)) {
+    // Check if date already exists (only if not editing)
+    if (editingIndex === -1 && timeEntries.some(e => e.date === date)) {
         showErr("startDateError", "Date already added.");
         return;
     }
@@ -845,7 +1006,7 @@ function addTimeEntry() {
     let dayHours = 0;
     let morningHours = 0, afternoonHours = 0, eveningHours = 0;
     if (morningIn && morningOut) {
-        morningHours = hoursBetween(morningIn, morningOut);
+        morningHours = TimeUtils.hoursBetween(morningIn, morningOut);
         if (morningHours === null || morningHours <= 0) {
             showErr("morningError", "Invalid morning times.");
             return;
@@ -853,7 +1014,7 @@ function addTimeEntry() {
         dayHours += morningHours;
     }
     if (afternoonIn && afternoonOut) {
-        afternoonHours = hoursBetween(afternoonIn, afternoonOut);
+        afternoonHours = TimeUtils.hoursBetween(afternoonIn, afternoonOut);
         if (afternoonHours === null || afternoonHours <= 0) {
             showErr("afternoonError", "Invalid afternoon times.");
             return;
@@ -861,7 +1022,7 @@ function addTimeEntry() {
         dayHours += afternoonHours;
     }
     if (eveningIn && eveningOut) {
-        eveningHours = hoursBetween(eveningIn, eveningOut);
+        eveningHours = TimeUtils.hoursBetween(eveningIn, eveningOut);
         if (eveningHours === null || eveningHours <= 0) {
             showErr("eveningError", "Invalid evening times.");
             return;
@@ -873,43 +1034,46 @@ function addTimeEntry() {
         return;
     }
 
-    // Add to accumulated
-    accumulatedHours += dayHours;
-
-    // Update progress bar
-    updateProgressBar(accumulatedHours, totalHours);
-
-    // Add entry
-    timeEntries.push({
+    const newEntry = {
         date,
         morning: morningIn && morningOut ? {in: morningIn, out: morningOut} : null,
         afternoon: afternoonIn && afternoonOut ? {in: afternoonIn, out: afternoonOut} : null,
         evening: eveningIn && eveningOut ? {in: eveningIn, out: eveningOut} : null,
         dayHours
-    });
+    };
+
+    if (editingIndex >= 0) {
+        // Update existing entry
+        timeEntries[editingIndex] = newEntry;
+        editingIndex = -1;
+    } else {
+        // Add new entry
+        timeEntries.push(newEntry);
+
+        // Set date to next day
+        const nextDay = new Date(date);
+        nextDay.setDate(nextDay.getDate() + 1);
+        const nextDayStr = nextDay.toISOString().split('T')[0];
+        document.getElementById("startDateInput").value = nextDayStr;
+    }
+
+    // Recalculate accumulated hours
+    accumulatedHours = timeEntries.reduce((sum, e) => sum + e.dayHours, 0);
+
+    // Update progress bar
+    updateProgressBar(accumulatedHours, totalHours);
 
     // Update history
     updateTimeEntryHistory();
 
-    // Clear inputs
-    document.getElementById("startDateInput").value = "";
-    document.getElementById("morningTimeIn").value = "";
-    document.getElementById("morningTimeOut").value = "";
-    document.getElementById("afternoonTimeIn").value = "";
-    document.getElementById("afternoonTimeOut").value = "";
-    document.getElementById("eveningTimeIn").value = "";
-    document.getElementById("eveningTimeOut").value = "";
-
     // Clear errors
     clearInputErrors();
-
-    // Next button removed, no action needed when total reached
 }
 
 function updateProgressBar(current, total) {
     const percentage = Math.min((current / total) * 100, 100);
     const progressEl = document.getElementById("inputTotalHours");
-    progressEl.textContent = current.toFixed(1);
+    progressEl.textContent = (total - current).toFixed(1);
     // Update clip-path
     const circleEl = document.querySelector('.relative .absolute.rounded-full.bg-blue-600');
     if (circleEl) {
@@ -920,16 +1084,72 @@ function updateProgressBar(current, total) {
 function updateTimeEntryHistory() {
     const historyEl = document.getElementById("timeEntryHistory");
     let html = "";
-    timeEntries.forEach(entry => {
-        html += `<div class="mb-2 p-2 bg-white rounded border">
+    timeEntries.forEach((entry, index) => {
+        html += `<div class="mb-2 p-2 bg-white rounded border relative">
             <strong>${entry.date}</strong>: ${entry.dayHours.toFixed(1)} hours
-            ${entry.morning ? `<br>Morning: ${entry.morning.in} - ${entry.morning.out}` : ''}
-            ${entry.afternoon ? `<br>Afternoon: ${entry.afternoon.in} - ${entry.afternoon.out}` : ''}
-            ${entry.evening ? `<br>Evening: ${entry.evening.in} - ${entry.evening.out}` : ''}
+            ${entry.morning ? `<br>Morning: ${formatTimeToAMPM(entry.morning.in)} - ${formatTimeToAMPM(entry.morning.out)}` : ''}
+            ${entry.afternoon ? `<br>Afternoon: ${formatTimeToAMPM(entry.afternoon.in)} - ${formatTimeToAMPM(entry.afternoon.out)}` : ''}
+            ${entry.evening ? `<br>Evening: ${formatTimeToAMPM(entry.evening.in)} - ${formatTimeToAMPM(entry.evening.out)}` : ''}
+            <div class="absolute top-2 right-2 flex space-x-2">
+                <button onclick="editTimeEntry(${index})" class="text-blue-600 hover:underline text-sm">Edit</button>
+                <button onclick="deleteTimeEntry(${index})" class="text-red-600 hover:underline text-sm">Delete</button>
+            </div>
         </div>`;
     });
     if (!html) html = "<p class='text-gray-500'>No time entries yet.</p>";
     historyEl.innerHTML = html;
+}
+
+// Edit time entry function
+function editTimeEntry(index) {
+    if (index < 0 || index >= timeEntries.length) {
+        alert("Invalid time entry selected.");
+        return;
+    }
+    const entry = timeEntries[index];
+
+    // Set editing index
+    editingIndex = index;
+
+    // Populate inputs with selected entry data
+    document.getElementById("startDateInput").value = entry.date || "";
+    document.getElementById("morningTimeIn").value = entry.morning ? entry.morning.in : "";
+    document.getElementById("morningTimeOut").value = entry.morning ? entry.morning.out : "";
+    document.getElementById("afternoonTimeIn").value = entry.afternoon ? entry.afternoon.in : "";
+    document.getElementById("afternoonTimeOut").value = entry.afternoon ? entry.afternoon.out : "";
+    document.getElementById("eveningTimeIn").value = entry.evening ? entry.evening.in : "";
+    document.getElementById("eveningTimeOut").value = entry.evening ? entry.evening.out : "";
+
+    // Clear errors
+    clearInputErrors();
+}
+
+// Delete time entry function
+function deleteTimeEntry(index) {
+    if (index < 0 || index >= timeEntries.length) {
+        alert("Invalid time entry selected.");
+        return;
+    }
+    if (!confirm("Are you sure you want to delete this time entry?")) {
+        return;
+    }
+    // Remove the entry
+    timeEntries.splice(index, 1);
+
+    // Recalculate accumulated hours
+    accumulatedHours = timeEntries.reduce((sum, e) => sum + e.dayHours, 0);
+    updateProgressBar(accumulatedHours, parseFloat(document.getElementById("totalHoursInput").value) || 0);
+
+    // Update history display
+    updateTimeEntryHistory();
+}
+
+function reviewSchedule() {
+    if (timeEntries.length > 0) {
+        reviewManualSchedule();
+    } else {
+        computeAndReviewSchedule();
+    }
 }
 
 function reviewManualSchedule() {
@@ -948,6 +1168,23 @@ function reviewManualSchedule() {
     document.getElementById("revDailyTime").textContent = "Varies";
     document.getElementById("revTotalHours").textContent = accumulatedHours.toFixed(1);
     document.getElementById("revLastDayNote").textContent = "";
+
+    // Populate time entries list
+    const timeEntriesList = document.getElementById("revTimeEntriesList");
+    let html = "";
+    timeEntries.forEach(entry => {
+        html += `<div class="mb-2 p-2 bg-white rounded border">
+            <strong>${entry.date}</strong>: ${entry.dayHours.toFixed(1)} hours
+            ${entry.morning ? `<br>Morning: ${formatTimeToAMPM(entry.morning.in)} - ${formatTimeToAMPM(entry.morning.out)}` : ''}
+            ${entry.afternoon ? `<br>Afternoon: ${formatTimeToAMPM(entry.afternoon.in)} - ${formatTimeToAMPM(entry.afternoon.out)}` : ''}
+            ${entry.evening ? `<br>Evening: ${formatTimeToAMPM(entry.evening.in)} - ${formatTimeToAMPM(entry.evening.out)}` : ''}
+        </div>`;
+    });
+    if (!html) html = "<p class='text-gray-500'>No time entries.</p>";
+    timeEntriesList.innerHTML = html;
+
+    // Show the time entries section
+    document.getElementById("revTimeEntriesSection").classList.remove("hidden");
 
     // Show Review modal
     closeScheduleInputModal();
@@ -1002,12 +1239,12 @@ function computeAndReviewSchedule() {
             );
             hasErr = true;
         } else {
-            dailyEnd = addHoursToTime(dailyStart, dailyHours);
+            dailyEnd = TimeUtils.addHoursToTime(dailyStart, dailyHours);
         }
     } else {
         const st = document.getElementById("startTimeET").value;
         const et = document.getElementById("endTimeET").value;
-        const diff = hoursBetween(st, et);
+        const diff = TimeUtils.hoursBetween(st, et);
         if (!st || !et || diff === null || !(diff > 0)) {
             showErr(
                 "etError",
@@ -1050,7 +1287,7 @@ function computeAndReviewSchedule() {
 
             // If this is the final (possibly partial) day, adjust lastDayEndTime
             if (remaining <= 0) {
-                lastDayEndTime = addHoursToTime(dailyStart, todaysHours);
+                lastDayEndTime = TimeUtils.addHoursToTime(dailyStart, todaysHours);
                 break;
             }
         }
@@ -1077,16 +1314,16 @@ function computeAndReviewSchedule() {
         .join(", ");
     document.getElementById(
         "revDailyTime"
-    ).textContent = `${dailyStart} - ${lastDayEndTime}`;
+    ).textContent = `${formatTimeToAMPM(dailyStart)} - ${formatTimeToAMPM(lastDayEndTime)}`;
     document.getElementById("revTotalHours").textContent =
         String(totalHours);
 
     // Note if final day ends earlier than base dailyEnd (partial day)
     const partialNote =
         (mode === "hoursPerDay" &&
-            lastDayEndTime !== addHoursToTime(dailyStart, dailyHours)) ||
+            lastDayEndTime !== TimeUtils.addHoursToTime(dailyStart, dailyHours)) ||
         (mode === "endTime" &&
-            hoursBetween(dailyStart, lastDayEndTime) !== dailyHours);
+            TimeUtils.hoursBetween(dailyStart, lastDayEndTime) !== dailyHours);
     const noteEl = document.getElementById("revLastDayNote");
     if (partialNote) {
         noteEl.textContent = `Note: Final day ends earlier to exactly meet ${totalHours} hours.`;
@@ -1194,12 +1431,18 @@ async function refreshScheduleDetails() {
             container.innerHTML = `<p class="text-center text-gray-500 col-span-full">Loading schedules...</p>`;
         }
 
-        const snapshot = await db.collection("schedules")
-            .where("roomCode", "==", selectedRoomCode)
-            .orderBy("createdAt", "desc")
-            .get();
-
+        const snapshot = await db.collection("rooms").where("joinCode", "==", selectedRoomCode).limit(1).get();
         if (snapshot.empty) {
+            if (container) {
+                container.innerHTML = `<p class="text-center text-red-500 col-span-full">Room not found.</p>`;
+            }
+            schedules = [];
+            return;
+        }
+        const roomDoc = snapshot.docs[0];
+        const schedulesSnap = await roomDoc.ref.collection("schedules").orderBy("createdAt", "desc").get();
+
+        if (schedulesSnap.empty) {
             if (container) {
                 container.innerHTML = `<p class="text-center text-gray-500 col-span-full">No schedules found for this room.</p>`;
             }
@@ -1207,7 +1450,7 @@ async function refreshScheduleDetails() {
             return;
         }
 
-        schedules = snapshot.docs.map(doc => doc.data());
+        schedules = schedulesSnap.docs.map(doc => doc.data());
         renderSchedulePage();
     } catch (error) {
         console.error("Error loading schedules:", error);
@@ -1259,7 +1502,7 @@ async function createRoom() {
       roomName,
       joinCode,
       coordinatorEmail,
-      coordinatorCode,
+      interns: [],
       createdAt: new Date(),
     });
 
@@ -1273,6 +1516,7 @@ async function createRoom() {
 
     // Clear input
     document.getElementById("roomName").value = "";
+    document.getElementById("requiredHours").value = "";
   } catch (err) {
     console.error("Error creating room:", err);
     statusEl.textContent = "❌ Failed to create room. Try again. " + err;
@@ -1435,55 +1679,34 @@ function renderSchedulePage() {
     }
 
     schedules.forEach((schedule, index) => {
-        // Create a container for this schedule's cards
-        const scheduleContainer = document.createElement("div");
-        scheduleContainer.className = "mb-6 p-4 border rounded-lg bg-gray-50";
+        const date = schedule.date;
+        const dayTotalHours = schedule.dayTotalHours;
+        const morning = schedule.morningIn && schedule.morningOut ? `${formatTimeToAMPM(schedule.morningIn)} - ${formatTimeToAMPM(schedule.morningOut)}` : '';
+        const afternoon = schedule.afternoonIn && schedule.afternoonOut ? `${formatTimeToAMPM(schedule.afternoonIn)} - ${formatTimeToAMPM(schedule.afternoonOut)}` : '';
+        const evening = schedule.eveningIn && schedule.eveningOut ? `${formatTimeToAMPM(schedule.eveningIn)} - ${formatTimeToAMPM(schedule.eveningOut)}` : '';
 
-        // Row for Start Date and End Date
-        const dateRow = document.createElement("div");
-        dateRow.className = "flex gap-2 mb-2";
+        // Create card
+        const card = document.createElement("div");
+        card.className = "bg-white p-4 rounded shadow mb-4 hover:bg-gray-50";
+        card.innerHTML = `
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="text-lg font-bold">Schedule for ${date}</h3>
+                <div class="flex space-x-2">
+                    <button onclick="openEditScheduleModal('${date}')" class="text-blue-600 hover:text-blue-800 p-1" title="Edit">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="deleteSchedule('${date}')" class="text-red-600 hover:text-red-800 p-1" title="Delete">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+            <p><strong>Total Hours:</strong> ${dayTotalHours}</p>
+            ${morning ? `<p><strong>Morning:</strong> ${morning}</p>` : ''}
+            ${afternoon ? `<p><strong>Afternoon:</strong> ${afternoon}</p>` : ''}
+            ${evening ? `<p><strong>Evening:</strong> ${evening}</p>` : ''}
+        `;
 
-        const startCard = document.createElement("div");
-        //startCard.className = "bg-white rounded-lg shadow p-4 flex-1";
-        //startCard.innerHTML = `<span class="font-semibold">Start Date:</span> ${schedule.startDate}`;
-
-        const endCard = document.createElement("div");
-        //endCard.className = "bg-white rounded-lg shadow p-4 flex-1";
-        //endCard.innerHTML = `<span class="font-semibold">End Date:</span> ${schedule.endDate}`;
-
-        dateRow.appendChild(startCard);
-        dateRow.appendChild(endCard);
-
-        // Row for Total Hours and Allowed Days
-        const infoRow = document.createElement("div");
-        infoRow.className = "flex gap-2 mb-2";
-
-        const hoursCard = document.createElement("div");
-        //hoursCard.className = "bg-white rounded-lg shadow p-4 flex-1";
-        //hoursCard.innerHTML = `<span class="font-semibold">Total Hours:</span> ${schedule.totalHours}`;
-
-        const daysCard = document.createElement("div");
-        //daysCard.className = "bg-white rounded-lg shadow p-4 flex-1";
-        //daysCard.innerHTML = `<span class="font-semibold">Allowed Days:</span> ${schedule.allowedDays.join(", ")}`;
-
-        infoRow.appendChild(hoursCard);
-        infoRow.appendChild(daysCard);
-
-        // View button card
-        const buttonCard = document.createElement("div");
-        buttonCard.className = "rounded-lg text-center mt-3";
-        const viewButton = document.createElement("button");
-        viewButton.className = "bg-blue-500 text-white px-3 py-2 rounded hover:bg-blue-600";
-        viewButton.textContent = "View Daily Times";
-        viewButton.onclick = () => toggleDailyTimes(index);
-        buttonCard.appendChild(viewButton);
-
-        // Append rows to container
-        scheduleContainer.appendChild(dateRow);
-        scheduleContainer.appendChild(infoRow);
-        scheduleContainer.appendChild(buttonCard);
-
-        container.appendChild(scheduleContainer);
+        container.appendChild(card);
     });
 }
 
@@ -1530,8 +1753,8 @@ function renderDailyTimesPage() {
             <tr class="border-b hover:bg-gray-50">
                 <td class="text-center p-3">${daily.date}</td>
                 <td class="text-center p-3">${DAY_LABELS[daily.day] || daily.day}</td>
-                <td class="text-center p-3">${daily.start}</td>
-                <td class="text-center p-3">${daily.end}</td>
+                <td class="text-center p-3">${formatTimeToAMPM(daily.start)}</td>
+                <td class="text-center p-3">${formatTimeToAMPM(daily.end)}</td>
             </tr>
         `;
     });
@@ -1639,6 +1862,15 @@ async function createTask() {
         return;
     }
     try {
+        // Get roomId from joinCode
+        const roomSnap = await db.collection('rooms').where('joinCode', '==', room).limit(1).get();
+        if (roomSnap.empty) {
+            statusEl.textContent = '❌ Room not found.';
+            statusEl.classList.remove('hidden');
+            return;
+        }
+        const roomId = roomSnap.docs[0].id;
+
         let fileUrl = null;
         if (file) {
             const storageRef = firebase.storage().ref();
@@ -1646,14 +1878,14 @@ async function createTask() {
             await fileRef.put(file);
             fileUrl = await fileRef.getDownloadURL();
         }
-        await db.collection('tasks').add({
+        await db.collection('rooms').doc(roomId).collection('tasks').add({
             title,
             description,
             dueDate: noDueDate ? null : dueDate,
-            roomCode: room,
+            coordinatorId: auth.currentUser.uid,
             coordinatorEmail: auth.currentUser.email,
             fileUrl,
-            createdAt: new Date()
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
         });
         statusEl.textContent = '✅ Task created successfully!';
         statusEl.classList.remove('hidden');
@@ -1672,28 +1904,34 @@ async function loadTasks() {
     try {
         // Get rooms
         const roomsSnapshot = await db.collection('rooms').where('coordinatorEmail', '==', coordinatorEmail).get();
-        const roomCodes = roomsSnapshot.docs.map(doc => doc.data().joinCode);
-        if (roomCodes.length === 0) {
+        if (roomsSnapshot.empty) {
             list.innerHTML = '<p class="text-gray-500">No rooms found.</p>';
             return;
         }
-        // Get tasks for these rooms
-        const tasksSnapshot = await db.collection('tasks').where('roomCode', 'in', roomCodes).orderBy('createdAt', 'desc').get();
-        if (tasksSnapshot.empty) {
+        // Get tasks for each room
+        let allTasks = [];
+        for (const roomDoc of roomsSnapshot.docs) {
+            const tasksSnap = await roomDoc.ref.collection('tasks').orderBy('createdAt', 'desc').get();
+            tasksSnap.forEach(doc => {
+                allTasks.push({ id: doc.id, ...doc.data(), roomCode: roomDoc.data().joinCode });
+            });
+        }
+        if (allTasks.length === 0) {
             list.innerHTML = '<p class="text-gray-500">No tasks found.</p>';
             return;
         }
+        // Sort all tasks by createdAt desc
+        allTasks.sort((a, b) => b.createdAt.toDate() - a.createdAt.toDate());
         let html = '';
-        tasksSnapshot.forEach(doc => {
-            const data = doc.data();
-            const fileLink = data.fileUrl ? `<a href="${data.fileUrl}" target="_blank" class="text-blue-600 hover:underline">Download File</a>` : 'No file';
-            const dueDateText = data.dueDate ? new Date(data.dueDate).toLocaleDateString() : 'No due date';
+        allTasks.forEach(task => {
+            const fileLink = task.fileUrl ? `<a href="${task.fileUrl}" target="_blank" class="text-blue-600 hover:underline">Download File</a>` : 'No file';
+            const dueDateText = task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'No due date';
             html += `
                 <div class="bg-white p-4 rounded-lg shadow border">
-                    <h3 class="text-lg font-semibold">${data.title}</h3>
-                    <p class="text-gray-600 mt-2">${data.description}</p>
+                    <h3 class="text-lg font-semibold">${task.title}</h3>
+                    <p class="text-gray-600 mt-2">${task.description}</p>
                     <p class="text-sm text-gray-500 mt-2">Due: ${dueDateText}</p>
-                    <p class="text-sm text-gray-500">Room: ${data.roomCode}</p>
+                    <p class="text-sm text-gray-500">Room: ${task.roomCode}</p>
                     <p class="text-sm mt-2">${fileLink}</p>
                 </div>
             `;

@@ -20,15 +20,18 @@ class RoomManager {
 
         container.classList.remove("hidden");
 
-        // Get room name
+        // Get room data
         let roomName = "Room Schedule";
+        let roomId = null;
         try {
             const roomSnap = await this.db.collection("rooms")
                 .where("joinCode", "==", roomCode)
                 .limit(1)
                 .get();
             if (!roomSnap.empty) {
-                roomName = roomSnap.docs[0].data().roomName || "Unnamed Room";
+                const roomData = roomSnap.docs[0].data();
+                roomName = roomData.name || "Unnamed Room";
+                roomId = roomSnap.docs[0].id;
             }
         } catch (err) {
             console.error("Failed to fetch room name:", err);
@@ -36,8 +39,8 @@ class RoomManager {
         document.getElementById("roomScheduleTitle").textContent = roomName;
 
         // Check if geofence exists for this room (supervisor room)
-        const geoSnap = await this.db.collection("geofences").doc(roomCode).get();
-        if (geoSnap.exists) {
+        const geoSnap = await this.db.collection("rooms").doc(roomId).collection("geofences").limit(1).get();
+        if (!geoSnap.empty) {
             // This is a supervisor room - show supervisor elements with map
             nonSupervisorElements.classList.add("hidden");
             const supervisorElements = document.getElementById("supervisorElements");
@@ -87,17 +90,14 @@ class RoomManager {
         // Load schedule as before
         tableDiv.innerHTML = "<p class='text-gray-500'>Loading schedule...</p>";
         try {
-            const scheduleSnap = await this.db.collection("schedules")
-                .where("roomCode", "==", roomCode)
-                .limit(1)
-                .get();
+            const scheduleSnap = await this.db.collection("rooms").doc(roomId).collection("schedules").get();
 
             if (scheduleSnap.empty) {
                 tableDiv.innerHTML = "<p class='text-gray-500'>No schedule found for this room.</p>";
                 return;
             }
 
-            const dailyTimes = scheduleSnap.docs[0].data().dailyTimes || [];
+            const dailyTimes = scheduleSnap.docs.map(doc => doc.data());
             if (dailyTimes.length === 0) {
                 tableDiv.innerHTML = "<p class='text-gray-500'>No schedule entries for this room.</p>";
                 return;
@@ -154,7 +154,7 @@ class RoomManager {
             let dayOfWeek = "N/A";
             if (s.date) {
                 try {
-                    const [month, day, year] = s.date.split('-').map(Number);
+                    const [year, month, day] = s.date.split('-').map(Number);
                     const dateObj = new Date(year, month - 1, day);
                     const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
                     dayOfWeek = days[dateObj.getDay()];
@@ -204,78 +204,25 @@ class RoomManager {
             }
 
             const roomDoc = roomSnap.docs[0];
+            const roomId = roomDoc.id;
             const roomData = roomDoc.data();
-            const roomRef = roomDoc.ref;
 
-            // Add joinCode to intern's rooms array
-            const internRef = this.db.collection("interns").doc(this.auth.currentUser.uid);
-            await internRef.update({
-                rooms: firebase.firestore.FieldValue.arrayUnion(joinCode)
+            // Add roomId to user's joinedRooms array
+            const userRef = this.db.collection("interns").doc(this.auth.currentUser.uid);
+            await userRef.update({
+                joinedRooms: firebase.firestore.FieldValue.arrayUnion(roomId)
             });
 
-            // Add intern's email to room's interns array
-            await roomRef.update({
-                interns: firebase.firestore.FieldValue.arrayUnion(this.auth.currentUser.email)
+            // Add to rooms/{roomId}/members
+            await this.db.collection("rooms").doc(roomId).collection("members").doc(this.auth.currentUser.uid).set({
+                joinedAt: new Date(),
+                progressHours: 0,
+                status: "active"
             });
-
-            // Check if intern_data document already exists for this intern and room
-            const existingInternDataSnap = await this.db.collection("intern_data")
-                .where("intern_email", "==", this.auth.currentUser.email)
-                .where("room_code", "==", joinCode)
-                .limit(1)
-                .get();
-
-            // Save to intern_data collection
-            const geofenceSnap = await this.db.collection("geofences").doc(joinCode).get();
-
-            if (geofenceSnap.exists) {
-                const geofence = geofenceSnap.data();
-
-                const internData = {
-                    intern_email: this.auth.currentUser.email,
-                    room_code: joinCode,
-                    type: "supervisor",
-                    geofence: geofence
-                };
-
-                if (!existingInternDataSnap.empty) {
-                    // Update existing document
-                    const existingDocRef = existingInternDataSnap.docs[0].ref;
-                    await existingDocRef.update(internData);
-                } else {
-                    // Create new document
-                    await this.db.collection("intern_data").add(internData);
-                }
-            } else {
-                const scheduleSnap = await this.db.collection("schedules").where("roomCode", "==", joinCode).limit(1).get();
-
-                if (!scheduleSnap.empty) {
-                    const schedule = scheduleSnap.docs[0].data();
-
-                    const internData = {
-                        intern_email: this.auth.currentUser.email,
-                        room_code: joinCode,
-                        type: "coordinator",
-                        schedule: schedule
-                    };
-
-                    if (!existingInternDataSnap.empty) {
-                        // Update existing document
-                        const existingDocRef = existingInternDataSnap.docs[0].ref;
-                        await existingDocRef.update(internData);
-                    } else {
-                        // Create new document
-                        await this.db.collection("intern_data").add(internData);
-                    }
-                }
-            }
 
             window.uiManager.closeJoinRoomModal();
-            // Save intern data after joining
-            await this.saveInternData();
             // Reload the page after successful room join
             location.reload();
-            this.fetchJoinedRooms();
         } catch (err) {
             console.error("Failed to join room:", err);
             status.textContent = "❌ Failed to join room. " + err;
@@ -287,15 +234,15 @@ class RoomManager {
         internRoomsDiv.innerHTML = "<p class='text-gray-500'>Loading rooms...</p>";
 
         try {
-            const internRef = this.db.collection("interns").doc(this.auth.currentUser.uid);
-            const internDoc = await internRef.get();
-            if (!internDoc.exists) {
-                internRoomsDiv.innerHTML = "<p class='text-gray-500'>No intern record found.</p>";
+            const userRef = this.db.collection("interns").doc(this.auth.currentUser.uid);
+            const userDoc = await userRef.get();
+            if (!userDoc.exists) {
+                internRoomsDiv.innerHTML = "<p class='text-gray-500'>No user record found.</p>";
                 return;
             }
 
-            const joinedCodes = internDoc.data().rooms || [];
-            if (joinedCodes.length === 0) {
+            const joinedRoomIds = userDoc.data().joinedRooms || [];
+            if (joinedRoomIds.length === 0) {
                 internRoomsDiv.innerHTML = "<p class='text-gray-500'>No rooms joined yet.</p>";
                 return;
             }
@@ -304,36 +251,34 @@ class RoomManager {
 
             internRoomsDiv.innerHTML = "";
 
-            for (const code of joinedCodes) {
-                const roomSnap = await this.db.collection("rooms")
-                    .where("joinCode", "==", code)
-                    .limit(1)
-                    .get();
+            for (const roomId of joinedRoomIds) {
+                const roomDoc = await this.db.collection("rooms").doc(roomId).get();
 
-                if (!roomSnap.empty) {
-                    const room = roomSnap.docs[0].data();
+                if (roomDoc.exists) {
+                    const room = roomDoc.data();
                     console.log("Joined room data:", room);
 
                     // Only display coordinator rooms, skip supervisor rooms
-                    if (room.supervisorEmail) {
+                    if (room.type === "supervisor") {
                         continue;
                     }
 
                     const card = document.createElement("div");
                     card.className = "border rounded-lg shadow-md p-4 hover:shadow-lg transition cursor-pointer mb-3";
                     card.style.backgroundColor = "#4175b8ea";
-                    card.id = `room-card-${room.joinCode || room.roomCode || code}`;
+                    card.id = `room-card-${room.joinCode}`;
 
                     // Handle different field name variations
-                    const roomName = room.roomName || "Unnamed Room";
-                    const roomCodeDisplay = room.joinCode || code;
+                    const roomName = room.name || "Unnamed Room";
+                    const roomCodeDisplay = room.joinCode;
 
                     // Fetch coordinator name
                     let roomDescription = "Not found";
-                    if (room.coordinatorEmail) {
+                    if (room.createdBy) {
                         try {
-                            const coordSnap = await this.db.collection("coordinators")
-                                .where("email", "==", room.coordinatorEmail)
+                            const coordSnap = await this.db.collection("interns")
+                                .where("uid", "==", room.createdBy)
+                                .where("role", "==", "coordinator")
                                 .limit(1)
                                 .get();
                             if (!coordSnap.empty) {
@@ -363,14 +308,12 @@ class RoomManager {
                         <p class="text-xs text-white">Code: ${roomCodeDisplay}</p>
                         <p class="text-xs text-white">${roomDescription}</p>
                     `;
-                    //<p class="text-sm text-gray-600 mb-2">${roomDescription}</p>
-                    //<p class="text-xs text-gray-400 mt-2">${room.supervisorEmail ? 'Supervisor/Principal' : 'Coordinator/Instructor'}</p>
                     internRoomsDiv.appendChild(card);
 
                     // Add click handler to show schedule
                     card.addEventListener("click", () => {
                         const container = document.getElementById("roomScheduleContainer");
-                        const roomCode = room.joinCode || room.roomCode || code;
+                        const roomCode = room.joinCode;
 
                         // If same room is clicked again → hide
                         if (container.dataset.activeRoom === roomCode) {
@@ -399,17 +342,14 @@ class RoomManager {
             }
 
             // Toggle visibility of noRoomsMessage based on whether coordinator rooms are joined
-            // Filter out supervisor rooms from joinedCodes
+            // Filter out supervisor rooms from joinedRoomIds
             const coordinatorRooms = [];
-            for (const code of joinedCodes) {
-                const roomSnap = await this.db.collection("rooms")
-                    .where("joinCode", "==", code)
-                    .limit(1)
-                    .get();
-                if (!roomSnap.empty) {
-                    const room = roomSnap.docs[0].data();
-                    if (!room.supervisorEmail) {
-                        coordinatorRooms.push(code);
+            for (const roomId of joinedRoomIds) {
+                const roomDoc = await this.db.collection("rooms").doc(roomId).get();
+                if (roomDoc.exists) {
+                    const room = roomDoc.data();
+                    if (room.type !== "supervisor") {
+                        coordinatorRooms.push(roomId);
                     }
                 }
             }
@@ -448,26 +388,26 @@ class RoomManager {
         }
 
         try {
-            const internRef = this.db.collection("interns").doc(this.auth.currentUser.uid);
+            // Get roomId from joinCode
+            const roomSnap = await this.db.collection("rooms").where("joinCode", "==", roomCode).limit(1).get();
+            if (roomSnap.empty) {
+                alert("Room not found.");
+                return;
+            }
+            const roomId = roomSnap.docs[0].id;
 
-            // Remove roomCode from intern's rooms array
-            await internRef.update({
-                rooms: firebase.firestore.FieldValue.arrayRemove(roomCode)
+            // Remove roomId from user's joinedRooms array
+            const userRef = this.db.collection("interns").doc(this.auth.currentUser.uid);
+            await userRef.update({
+                joinedRooms: firebase.firestore.FieldValue.arrayRemove(roomId)
             });
 
-            // Remove intern's email from room's interns array
-            const roomSnap = await this.db.collection("rooms").where("joinCode", "==", roomCode).limit(1).get();
-            if (!roomSnap.empty) {
-                const roomDoc = roomSnap.docs[0];
-                const roomRef = roomDoc.ref;
-                await roomRef.update({
-                    interns: firebase.firestore.FieldValue.arrayRemove(this.auth.currentUser.email)
-                });
-            }
+            // Delete from rooms/{roomId}/members
+            await this.db.collection("rooms").doc(roomId).collection("members").doc(this.auth.currentUser.uid).delete();
 
             // Check if the room being left is a supervisor room (has geofence)
-            const geofenceSnap = await this.db.collection("geofences").doc(roomCode).get();
-            const isSupervisorRoom = geofenceSnap.exists;
+            const geoSnap = await this.db.collection("rooms").doc(roomId).collection("geofences").limit(1).get();
+            const isSupervisorRoom = !geoSnap.empty;
 
             // Close the popover
             const popover = document.getElementById(`popover-${roomCode}`);
@@ -501,77 +441,6 @@ class RoomManager {
         } catch (err) {
             console.error("Failed to leave room:", err);
             alert("Failed to leave room. Please try again.");
-        }
-    }
-
-    async saveInternData() {
-        try {
-            const internEmail = this.auth.currentUser.email;
-            const internRef = this.db.collection("interns").doc(this.auth.currentUser.uid);
-            const internDoc = await internRef.get();
-            if (!internDoc.exists) throw new Error("Intern data not found");
-
-            const internData = internDoc.data();
-            const supervisorEmail = internData.supervisorEmail;
-            const coordinatorCode = internData.coordinatorCode;
-
-            // Find supervisorRoom
-            let supervisorRoom = null;
-            const supervisorRoomSnap = await this.db.collection("rooms")
-                .where("supervisorEmail", "==", supervisorEmail)
-                .limit(1)
-                .get();
-            if (!supervisorRoomSnap.empty) {
-                supervisorRoom = supervisorRoomSnap.docs[0].data().joinCode;
-            }
-
-            // Find coordinatorRoom
-            let coordinatorRoom = null;
-            const coordinatorSnap = await this.db.collection("coordinators")
-                .where("code", "==", coordinatorCode)
-                .limit(1)
-                .get();
-            if (!coordinatorSnap.empty) {
-                const coordinatorEmail = coordinatorSnap.docs[0].data().email;
-                const coordinatorRoomSnap = await this.db.collection("rooms")
-                    .where("coordinatorEmail", "==", coordinatorEmail)
-                    .limit(1)
-                    .get();
-                if (!coordinatorRoomSnap.empty) {
-                    coordinatorRoom = coordinatorRoomSnap.docs[0].data().joinCode;
-                }
-            }
-
-            // Fetch internSchedule
-            let internSchedule = [];
-            if (coordinatorRoom) {
-                const scheduleSnap = await this.db.collection("schedules")
-                    .where("roomCode", "==", coordinatorRoom)
-                    .get();
-                internSchedule = scheduleSnap.docs.map(doc => doc.data());
-            }
-
-            // Fetch geofence
-            let geofence = null;
-            if (supervisorRoom) {
-                const geofenceSnap = await this.db.collection("geofences").doc(supervisorRoom).get();
-                if (geofenceSnap.exists) {
-                    geofence = geofenceSnap.data();
-                }
-            }
-
-            // Save to intern_data collection
-            const internDataRef = this.db.collection("intern_data").doc(internEmail);
-            await internDataRef.set({
-                supervisorRoom: supervisorRoom,
-                coordinatorRoom: coordinatorRoom,
-                internSchedule: internSchedule,
-                geofence: geofence
-            }, { merge: true });
-
-            console.log("Intern data saved successfully");
-        } catch (err) {
-            console.error("Failed to save intern data:", err);
         }
     }
 }

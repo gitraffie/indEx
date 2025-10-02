@@ -41,18 +41,27 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Authentication State Change
 window.onload = () => {
+    console.log("DEBUG: window.onload called, setting up auth state listener");
     auth.onAuthStateChanged(async (user) => {
+        console.log("DEBUG: onAuthStateChanged triggered, user:", user ? user.email : "null");
         if (user && user.emailVerified) {
+            console.log("DEBUG: User is verified, checking supervisor collection");
             const snapshot = await db
                 .collection("supervisors")
                 .where("email", "==", user.email)
                 .limit(1)
                 .get();
+            console.log("DEBUG: Supervisor query result, empty:", snapshot.empty);
             if (snapshot.empty) {
+                console.log("DEBUG: No supervisor document found, signing out and showing error");
                 await auth.signOut();
-                location.reload();
+                document.getElementById("authModal").classList.remove("hidden");
+                document.getElementById("dashboard").classList.add("hidden");
+                document.getElementById("confirmModal").style.display = "none";
+                document.getElementById("authStatus").textContent = "❌ This email is not registered as a supervisor. Please register first.";
                 return;
             }
+            console.log("DEBUG: Supervisor found, showing confirmation modal");
             document.getElementById("authModal").classList.add("hidden");
             document.getElementById("dashboard").classList.add("hidden");
             document.getElementById("loggedInEmail").textContent = user.email;
@@ -65,6 +74,7 @@ window.onload = () => {
                 proceedToDashboard();
             }
         } else {
+            console.log("DEBUG: User not verified or null, showing auth modal");
             document.getElementById("authModal").classList.remove("hidden");
             document.getElementById("dashboard").classList.add("hidden");
             document.getElementById("confirmModal").style.display = "none";
@@ -73,56 +83,74 @@ window.onload = () => {
 };
 
 // Authentication Functions
-function login() {
+function login(event) {
+    if (event) event.preventDefault(); // Prevent form submission and page reload
+    console.log("DEBUG: login function called");
     const email = document.getElementById("email").value;
     const password = document.getElementById("password").value;
     const fullName = document.getElementById("fullName").value;
     const company = document.getElementById("company").value;
     const authStatus = document.getElementById("authStatus");
 
+    console.log("DEBUG: login inputs - email:", email, "isRegisterMode:", isRegisterMode);
+
     if (isRegisterMode) {
-  auth
-    .createUserWithEmailAndPassword(email, password)
-    .then((cred) => {
-        return cred.user.sendEmailVerification().then(() => {
-            return db.collection("supervisors").doc(cred.user.uid).set({
-                email,
-                fullName,
-                company,
-                createdAt: new Date(),
-            });
-        });
-    })
+        console.log("DEBUG: Registering new user");
+        auth
+            .createUserWithEmailAndPassword(email, password)
+            .then((cred) => {
+                console.log("DEBUG: User created, sending verification email");
+                return cred.user.sendEmailVerification().then(() => {
+                    console.log("DEBUG: Verification email sent, creating supervisor doc");
+                    return db.collection("supervisors").doc(cred.user.uid).set({
+                        email,
+                        fullName,
+                        company,
+                        createdAt: new Date(),
+                    });
+                });
+            })
             .then(() => {
+                console.log("DEBUG: Registration successful, supervisor doc created");
                 authStatus.textContent =
                     "✅ Verification email sent. Please verify before logging in.";
             })
             .catch((err) => {
+                console.error("DEBUG: Registration error:", err);
                 authStatus.textContent = "❌ " + err.message;
             });
     } else {
+        console.log("DEBUG: Attempting login");
         auth
             .signInWithEmailAndPassword(email, password)
             .then(async (cred) => {
+                console.log("DEBUG: Sign in successful, checking email verification");
                 if (!cred.user.emailVerified) {
+                    console.log("DEBUG: Email not verified");
                     authStatus.textContent =
                         "⚠️ Please verify your email before logging in.";
                     auth.signOut();
                     return;
                 }
+                console.log("DEBUG: Email verified, checking supervisor collection");
                 const snapshot = await db
                     .collection("supervisors")
                     .where("email", "==", email)
                     .limit(1)
                     .get();
                 if (snapshot.empty) {
+                    console.log("DEBUG: No supervisor document found");
                     authStatus.textContent =
                         "❌ This email is not registered as a supervisor.";
                     auth.signOut();
                     return;
                 }
+                console.log("DEBUG: Supervisor found, login complete");
+                // Proceed to dashboard after successful login
+                proceedToDashboard();
             })
             .catch((err) => {
+                console.error("DEBUG: Login error:", err);
                 authStatus.textContent = "❌ " + err.message;
             });
     }
@@ -173,35 +201,48 @@ function initMap() {
     disableGeofenceEdit(); // Disable editing by default
 }
 
-function loadGeofence(joinCode) {
+async function getRoomIdByJoinCode(joinCode) {
+    const roomSnap = await db.collection("rooms")
+        .where("joinCode", "==", joinCode)
+        .limit(1)
+        .get();
+    if (roomSnap.empty) {
+        return null;
+    }
+    return roomSnap.docs[0].id;
+}
+
+// Load geofence for this room
+async function loadGeofence(joinCode) {
     if (!joinCode) return;
-    db.collection("geofences")
-        .doc(joinCode)
-        .get()
-        .then((doc) => {
-            if (doc.exists) {
-                const data = doc.data();
-                const latlng = [data.center.lat, data.center.lng];
-                const radius = data.radius || 100;
-                document.getElementById("radiusInput").value = radius;
+    const roomId = await getRoomIdByJoinCode(joinCode);
+    if (!roomId) {
+        console.warn("loadGeofence: Room not found for joinCode", joinCode);
+        return;
+    }
+    const geoSnap = await db.collection("rooms").doc(roomId).collection("geofences").limit(1).get();
+    if (!geoSnap.empty) {
+        const data = geoSnap.docs[0].data();
+        const latlng = [data.center.lat, data.center.lng];
+        const radius = data.radius || 100;
+        document.getElementById("radiusInput").value = radius;
 
-                if (marker) map.removeLayer(marker);
-                if (circle) map.removeLayer(circle);
+        if (marker) map.removeLayer(marker);
+        if (circle) map.removeLayer(circle);
 
-                marker = L.marker(latlng).addTo(map);
-                circle = L.circle(latlng, { radius: radius }).addTo(map);
-                map.setView(latlng, 16);
-                map.invalidateSize();
-            } else {
-                // No geofence for this room, reset map
-                if (marker) map.removeLayer(marker);
-                if (circle) map.removeLayer(circle);
-                marker = null;
-                circle = null;
-                document.getElementById("radiusInput").value = 100;
-                map.setView([10.7502, 121.9324], 15);
-            }
-        });
+        marker = L.marker(latlng).addTo(map);
+        circle = L.circle(latlng, { radius: radius }).addTo(map);
+        map.setView(latlng, 16);
+        map.invalidateSize();
+    } else {
+        // No geofence for this room, reset map
+        if (marker) map.removeLayer(marker);
+        if (circle) map.removeLayer(circle);
+        marker = null;
+        circle = null;
+        document.getElementById("radiusInput").value = 100;
+        map.setView([10.7502, 121.9324], 15);
+    }
 }
 
 function enableGeofenceEdit() {
@@ -220,7 +261,7 @@ function disableGeofenceEdit() {
     if (map) map.off("click", onMapClick);
 }
 
-function saveGeofence() {
+async function saveGeofence() {
     console.log("saveGeofence: Function called");
     const radius = parseInt(document.getElementById("radiusInput").value);
     console.log("saveGeofence: Radius from input:", radius);
@@ -258,13 +299,13 @@ function saveGeofence() {
         email,
     });
 
-    console.log("saveGeofence: Attempting to save geofence with values:", {
-        lat,
-        lng,
-        radius,
-        joinCode: selectedRoomCode,
-        email,
-    });
+    const roomId = await getRoomIdByJoinCode(selectedRoomCode);
+    if (!roomId) {
+        console.error("saveGeofence: Room not found for joinCode", selectedRoomCode);
+        document.getElementById("status").textContent =
+            "❌ Room not found.";
+        return;
+    }
 
     const geofenceData = {
         center: { lat, lng },
@@ -275,9 +316,7 @@ function saveGeofence() {
     };
     console.log("saveGeofence: Data to save:", geofenceData);
 
-    db.collection("geofences")
-        .doc(selectedRoomCode)
-        .set(geofenceData)
+    db.collection("rooms").doc(roomId).collection("geofences").doc().set(geofenceData)
         .then(() => {
             console.log("saveGeofence: Firestore set successful");
             document.getElementById(

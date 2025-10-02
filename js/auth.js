@@ -59,10 +59,11 @@ class AuthManager {
                 );
                 await cred.user.sendEmailVerification();
 
-                await this.db.collection("interns").doc(cred.user.uid).set({
+                await this.db.collection("users").doc(cred.user.uid).set({
                     email,
                     name: fullName,
-                    school,
+                    school: school,
+                    role: "intern",
                     createdAt: new Date(),
                 });
                 status.textContent =
@@ -71,14 +72,17 @@ class AuthManager {
                 status.textContent = "❌ " + err.message;
             }
         } else {
-            const supervisorSnapshot = await this.db
-                .collection("supervisors")
+            const userSnapshot = await this.db
+                .collection("users")
                 .where("email", "==", email)
                 .get();
-            if (!supervisorSnapshot.empty) {
-                status.textContent =
-                    "⚠️ This account is a supervisor. Please use the supervisor login.";
-                return;
+            if (!userSnapshot.empty) {
+                const userData = userSnapshot.docs[0].data();
+                if (userData.role === "supervisor") {
+                    status.textContent =
+                        "⚠️ This account is a supervisor. Please use the supervisor login.";
+                    return;
+                }
             }
 
             this.auth
@@ -110,8 +114,16 @@ class AuthManager {
                 return;
             }
 
-            const internDoc = await this.db.collection("interns").doc(user.uid).get();
-            if (!internDoc.exists) {
+            try {
+                const userDoc = await this.db.collection("users").doc(user.uid).get();
+                if (!userDoc.exists || userDoc.data().role !== "intern") {
+                    await this.auth.signOut();
+                    modal.style.display = "flex";
+                    content.style.display = "none";
+                    return;
+                }
+            } catch (err) {
+                console.error("Error getting user doc:", err);
                 await this.auth.signOut();
                 modal.style.display = "flex";
                 content.style.display = "none";
@@ -154,7 +166,7 @@ class AuthManager {
 
             document.getElementById("loggedInEmail").textContent = user.email;
 
-            this.currentIntern = internDoc.data();
+            this.currentIntern = userDoc.data();
 
             // Update user profile in sidebar
             document.getElementById("username").textContent =
@@ -278,9 +290,6 @@ class AuthManager {
         }
     }
 }
-
-// Create global auth manager instance
-window.authManager = new AuthManager();
 
 // Export for use in modules
 window.AuthManager = AuthManager;
