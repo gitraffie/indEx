@@ -25,6 +25,7 @@ let coordinatorCode = "";
 let accumulatedHours = 0;
 let timeEntries = [];
 let editingIndex = -1;
+let roomTotalHours = 0;
 
 // Constants
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -91,14 +92,7 @@ document.addEventListener('DOMContentLoaded', function() {
         nextDailyPageBtn.addEventListener("click", nextDailyPage);
     }
 
-    // Update progress bar for total hours input
-    const totalHoursInput = document.getElementById("totalHoursInput");
-    if (totalHoursInput) {
-        totalHoursInput.addEventListener("input", function() {
-            const value = this.value || 0;
-            document.getElementById("inputTotalHours").textContent = value;
-        });
-    }
+    // Removed event listener for totalHoursInput to keep inputTotalHours fixed to roomTotalHours
 
     // Navigation event listeners
     document.getElementById('dashboard-nav').addEventListener('click', () => showSection('dashboard'));
@@ -273,8 +267,9 @@ async function loadInterns() {
       return;
     }
 
-    const roomData = roomSnapshot.docs[0].data();
-    const internsEmails = roomData.interns || [];
+    const roomDoc = roomSnapshot.docs[0];
+    const membersSnapshot = await roomDoc.ref.collection("members").get();
+    const internsEmails = membersSnapshot.docs.map(doc => doc.data().email).filter(email => email);
 
     internList.innerHTML = "";
     if (internsEmails.length === 0) {
@@ -284,18 +279,18 @@ async function loadInterns() {
 
     for (const email of internsEmails) {
       try {
-        // Fetch intern details from interns collection
-        const internSnapshot = await db.collection("interns")
+        // Fetch intern details from rooms -> members subcollection
+        const memberSnapshot = await roomDoc.ref.collection("members")
           .where("email", "==", email)
           .limit(1)
           .get();
 
         let internName = "Unnamed Intern";
         let internId = null;
-        if (!internSnapshot.empty) {
-          const internData = internSnapshot.docs[0].data();
-          internName = internData.name || "Unnamed Intern";
-          internId = internSnapshot.docs[0].id;
+        if (!memberSnapshot.empty) {
+          const memberData = memberSnapshot.docs[0].data();
+          internName = memberData.name || "Unnamed Intern";
+          internId = memberSnapshot.docs[0].id;
         }
 
         let timedInStatus = "❌ Not Timed In";
@@ -383,7 +378,6 @@ async function saveSchedule() {
         if (roomSnap.empty) throw new Error("Room not found.");
         const roomDoc = roomSnap.docs[0];
         const roomData = roomDoc.data();
-        let remainingHours = roomData.remainingHours || 0;
 
         let daySchedules = [];
 
@@ -500,7 +494,7 @@ async function saveSchedule() {
         await batch.commit();
 
         // Deduct from remaining hours
-        await roomDoc.ref.update({ remainingHours: remainingHours - totalToDeduct });
+        await roomDoc.ref.update({ remainingHours: (roomData.remainingHours || 0) - totalToDeduct });
 
         alert("Schedule saved successfully!");
         // Reset manual entries after save
@@ -1347,66 +1341,6 @@ function showErr(id, message) {
 }
 
 // ======= Missing Functions =======
-function logoutAllInterns() {
-    if (!auth.currentUser) {
-        alert("Please log in first.");
-        return;
-    }
-
-    if (!confirm("Are you sure you want to log out all interns? This will sign out all interns from their accounts.")) {
-        return;
-    }
-
-    const coordinatorEmail = auth.currentUser.email;
-    
-    // Show loading overlay
-    document.getElementById("loadingOverlay").classList.remove("hidden");
-
-    // Get all interns for this coordinator
-    db.collection("interns")
-        .where("coordinatorCode", "==", coordinatorCode)
-        .get()
-        .then((snapshot) => {
-            if (snapshot.empty) {
-                document.getElementById("loadingOverlay").classList.add("hidden");
-                alert("No interns found to log out.");
-                return;
-            }
-
-            const logoutPromises = [];
-            
-            snapshot.forEach((doc) => {
-                const intern = doc.data();
-                // Sign out the intern by clearing their auth state
-                logoutPromises.push(
-                    auth.signOut().catch(error => {
-                        console.error(`Error signing out intern ${intern.email}:`, error);
-                    })
-                );
-                
-                // Clear intern's presence data
-                logoutPromises.push(
-                    db.collection("interns_inside").doc(doc.id).delete()
-                        .catch(error => {
-                            console.error(`Error clearing presence for ${intern.email}:`, error);
-                        })
-                );
-            });
-
-            return Promise.all(logoutPromises);
-        })
-        .then(() => {
-            document.getElementById("loadingOverlay").classList.add("hidden");
-            alert("All interns have been logged out successfully.");
-            loadInterns(); // Refresh the intern list
-        })
-        .catch((error) => {
-            document.getElementById("loadingOverlay").classList.add("hidden");
-            console.error("Error logging out interns:", error);
-            alert("Error logging out interns. Please try again.");
-        });
-}
-
 function formatTimeToAMPM(timeStr) {
     if (!timeStr) return "";
     const [h, m] = timeStr.split(":").map(Number);
@@ -1440,6 +1374,12 @@ async function refreshScheduleDetails() {
             return;
         }
         const roomDoc = snapshot.docs[0];
+
+        // Fetch intern UIDs from members subcollection
+        const membersSnap = await roomDoc.ref.collection("members").get();
+        const internUids = membersSnap.docs.map(doc => doc.id);
+
+        // Fetch schedules
         const schedulesSnap = await roomDoc.ref.collection("schedules").orderBy("createdAt", "desc").get();
 
         if (schedulesSnap.empty) {
@@ -1450,7 +1390,10 @@ async function refreshScheduleDetails() {
             return;
         }
 
-        schedules = schedulesSnap.docs.map(doc => doc.data());
+        // Filter schedules to exclude those where uid matches any intern UID or totalHours is 0 or undefined
+        const allSchedules = schedulesSnap.docs.map(doc => doc.data());
+        schedules = allSchedules.filter(schedule => !internUids.includes(schedule.uid) && schedule.dayTotalHours !== 0 && schedule.dayTotalHours !== undefined);
+
         renderSchedulePage();
     } catch (error) {
         console.error("Error loading schedules:", error);
@@ -1475,10 +1418,18 @@ function generateJoinCode() {
 // Create Room Function
 async function createRoom() {
   const roomName = document.getElementById("roomName").value.trim();
+  const requiredHours = parseFloat(document.getElementById("requiredHours").value);
   const statusEl = document.getElementById("roomStatus");
 
   if (!roomName) {
     statusEl.textContent = "❌ Room name is required.";
+    statusEl.classList.remove("text-green-600");
+    statusEl.classList.add("text-red-600");
+    return;
+  }
+
+  if (!requiredHours || requiredHours <= 0) {
+    statusEl.textContent = "❌ Required hours must be a positive number.";
     statusEl.classList.remove("text-green-600");
     statusEl.classList.add("text-red-600");
     return;
@@ -1503,6 +1454,7 @@ async function createRoom() {
       joinCode,
       coordinatorEmail,
       interns: [],
+      totalHours: requiredHours,
       createdAt: new Date(),
     });
 
@@ -1553,8 +1505,12 @@ async function fetchRooms() {
             <p class="text-sm text-gray-500">Join Code: <strong>${joinCode}</strong></p>
             <p class="text-xs text-gray-400">Created: ${date}</p>
             </div>
-            <button onclick="event.stopPropagation(); copyJoinCode('${joinCode}')" 
-            class="text-blue-600 text-sm hover:underline">Copy Code</button>
+            <div class="flex flex-col space-y-1">
+                <button onclick="event.stopPropagation(); copyJoinCode('${joinCode}')" 
+                class="text-blue-600 text-sm hover:underline">Copy Code</button>
+                <button onclick="event.stopPropagation(); deleteRoom('${joinCode}')" 
+                class="text-red-600 text-sm hover:underline">Delete Room</button>
+            </div>
         </li>
         `;
     });
@@ -1569,6 +1525,47 @@ function copyJoinCode(code) {
   navigator.clipboard.writeText(code)
     .then(() => alert(`Join code ${code} copied to clipboard!`))
     .catch(() => alert("Failed to copy code."));
+}
+
+async function deleteRoom(joinCode) {
+    if (!confirm(`Are you sure you want to delete the room with code ${joinCode}? This action cannot be undone and will remove all associated schedules and tasks.`)) {
+        return;
+    }
+
+    try {
+        const snapshot = await db.collection("rooms").where("joinCode", "==", joinCode).limit(1).get();
+        if (snapshot.empty) {
+            alert("Room not found.");
+            return;
+        }
+
+        const roomDoc = snapshot.docs[0];
+        const batch = db.batch();
+
+        // Delete all schedules in the room
+        const schedulesSnap = await roomDoc.ref.collection("schedules").get();
+        schedulesSnap.forEach(doc => batch.delete(doc.ref));
+
+        // Delete all tasks in the room
+        const tasksSnap = await roomDoc.ref.collection("tasks").get();
+        tasksSnap.forEach(doc => batch.delete(doc.ref));
+
+        // Delete the room document
+        batch.delete(roomDoc.ref);
+
+        await batch.commit();
+
+        alert("Room deleted successfully.");
+        fetchRooms();
+
+        // If the deleted room was currently selected, go back to room list
+        if (selectedRoomCode === joinCode) {
+            backToRooms();
+        }
+    } catch (error) {
+        console.error("Error deleting room:", error);
+        alert("Failed to delete room. Please try again.");
+    }
 }
 
 
@@ -1628,26 +1625,47 @@ async function fetchRoomInterns(roomCode) {
     }
 }
 
-function openScheduleModal() {
+async function openScheduleModal() {
   if (!selectedRoomCode) {
     alert("No room selected.");
     return;
   }
 
-  // Reset manual entry variables
-  accumulatedHours = 0;
-  timeEntries = [];
-  updateProgressBar(0, parseFloat(document.getElementById("totalHoursInput").value) || 0);
-  updateTimeEntryHistory();
+  try {
+    // Fetch room data to get totalHours
+    const roomSnap = await db.collection("rooms").where("joinCode", "==", selectedRoomCode).limit(1).get();
+    if (roomSnap.empty) {
+      alert("Room not found.");
+      return;
+    }
+    const roomDoc = roomSnap.docs[0];
+    const roomData = roomDoc.data();
+    const roomId = roomDoc.id;
+    const totalHours = roomData.totalHours || 0;
 
-  // Next button removed, modal only for input
+    // Set roomTotalHours to totalHours, and inputTotalHours to totalHours
+    roomTotalHours = totalHours;
+    document.getElementById("totalHoursInput").value = totalHours;
+    document.getElementById("inputTotalHours").textContent = totalHours;
 
-  // Open existing schedule creation modal
-  document.getElementById("scheduleInputModal").classList.remove("hidden");
+    // Reset manual entry variables
+    accumulatedHours = 0;
+    timeEntries = [];
+    updateProgressBar(0, totalHours);
+    updateTimeEntryHistory();
 
-  // Optionally update modal title to reflect room name
-  document.getElementById("scheduleModalTitle").textContent =
-      `Create Schedule for Room: ${selectedRoomCode}`;
+    // Next button removed, modal only for input
+
+    // Open existing schedule creation modal
+    document.getElementById("scheduleInputModal").classList.remove("hidden");
+
+    // Optionally update modal title to reflect room name
+    document.getElementById("scheduleModalTitle").textContent =
+        `Create Schedule for Room: ${selectedRoomCode}`;
+  } catch (error) {
+    console.error("Error opening schedule modal:", error);
+    alert("Failed to load room data for schedule.");
+  }
 }
 
 function closeRoomModal() {

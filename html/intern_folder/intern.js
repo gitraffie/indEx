@@ -1,3 +1,9 @@
+// Intern Dashboard Application
+// This file contains the main logic for the intern dashboard, including authentication,
+// room management, time tracking, task management, and geofencing functionality.
+// Updated to support time entry display enhancements: splitting entries into morning/afternoon/evening,
+// sorting by date descending and period order, and navigation buttons for time entry cards.
+
 console.log("🔥 [INIT] Starting Firebase initialization...");
 const firebaseConfig = {
     apiKey: "AIzaSyDaCCFqs7cwKMiicnlP2Ig3s-WHw8gyZts",
@@ -44,6 +50,31 @@ let infoWindow = null;
 let globalCoordinatorTotal = 0;
 let initialAuthLoad = true;
 
+function timeToMinutes(timeStr) {
+    if (!timeStr || typeof timeStr !== 'string') {
+        return 0;
+    }
+    const [h, m] = timeStr.split(':').map(Number);
+    return h * 60 + m;
+}
+
+function calculateTotalHours(data) {
+    let total = 0;
+    const periods = ['morning', 'afternoon', 'evening'];
+    for (const period of periods) {
+        const inTime = data[`${period}In`];
+        const outTime = data[`${period}Out`];
+        if (inTime && outTime) {
+            const inMinutes = timeToMinutes(inTime);
+            const outMinutes = timeToMinutes(outTime);
+            if (outMinutes > inMinutes) {
+                total += (outMinutes - inMinutes) / 60;
+            }
+        }
+    }
+    return total;
+}
+
 function toggleAuthMode() {
     isRegisterMode = !isRegisterMode;
     document.getElementById("modalTitle").textContent = isRegisterMode
@@ -64,11 +95,7 @@ function toggleAuthMode() {
 
     // Update toggleMode button text
     const toggleModeBtn = document.getElementById("toggleMode");
-    if (isRegisterMode) {
-        toggleModeBtn.textContent = "Log in here";
-    } else {
-        toggleModeBtn.textContent = "Register here";
-    }
+    toggleModeBtn.textContent = isRegisterMode ? "Log in here" : "Register here";
 }
 
 async function authAction() {
@@ -204,6 +231,7 @@ async function authAction() {
                 status.textContent = "❌ " + err.message;
             });
     }
+    refreshBtn();
 }
 
 auth.onAuthStateChanged(async (user) => {
@@ -418,6 +446,7 @@ auth.onAuthStateChanged(async (user) => {
         alert("Application initialization error. Please refresh the page.");
         return;
     }
+});
 
 async function loadInternData(userInfo, user) {
         try {
@@ -532,7 +561,10 @@ async function loadInternData(userInfo, user) {
             loadHoursLeft(activeRoom);
             refreshBtn(activeRoom);
 
-            modal.style.display = "none";
+            const modal = document.getElementById("authModal");
+            if (modal) {
+                modal.style.display = "none";
+            }
 
             // At the very end of onAuthStateChanged
             setTimeout(() => {
@@ -554,17 +586,19 @@ async function loadInternData(userInfo, user) {
         } catch (error) {
             console.error('Error loading intern data:', error);
             // Gracefully handle permission errors by proceeding without loading joined rooms data
-            modal.style.display = "none";
-            setTimeout(() => {
-                const loading = document.getElementById("loadingScreen");
-                loading.classList.add("opacity-0");
-                setTimeout(() => (loading.style.display = "none"), 300);
-            }, 100);
+            const modal = document.getElementById("authModal");
+            if (modal) {
+                modal.style.display = "none";
+            }
         }
     }
-});
 
 async function checkSupervisorZoneStatus(user) {
+  if (!user) {
+    console.error("User not authenticated");
+    return;
+  }
+
   try {
     console.log("DEBUG: checkSupervisorZoneStatus started");
     console.log("DEBUG: User present:", user.uid);
@@ -663,6 +697,9 @@ async function checkSupervisorZoneStatus(user) {
           </button>
         </div>
       `;
+
+      // Refresh button states for the supervisor room on page load
+      refreshBtn(supervisorRoomId);
     } else {
       // Show input and button
       inputDiv.style.display = 'flex';
@@ -684,17 +721,15 @@ async function checkSupervisorZoneStatus(user) {
 let currentTimeEntries = [];
 let currentTimeEntryIndex = 0;
 
-// Function to display result messages
+// Function to display result messages using SweetAlert
 function showResultMessage(message, type) {
-  const resultDiv = document.getElementById('result');
-  if (resultDiv) {
-    resultDiv.textContent = message;
-    resultDiv.className = `text-center text-lg font-semibold pb-5 pt-5 ${
-      type === 'error' ? 'text-red-600' :
-      type === 'success' ? 'text-green-600' :
-      'text-blue-600'
-    }`;
-  }
+  const icon = type === 'error' ? 'error' : type === 'success' ? 'success' : 'info';
+  Swal.fire({
+    text: message,
+    icon: icon,
+    timer: 3000,
+    showConfirmButton: false
+  });
 }
 
 async function displayRoomSchedule(roomId) {
@@ -780,6 +815,9 @@ async function displayRoomSchedule(roomId) {
 
         currentTimeEntries = [];
         entriesSnap.docs.forEach(doc => {
+            // Skip rendering time entries that belong to the current user
+            if (doc.id === auth.currentUser.uid) return;
+
             const data = doc.data();
             const date = data.date;
             const createdAt = data.createdAt;
@@ -824,8 +862,27 @@ async function displayRoomSchedule(roomId) {
             }
         });
 
-        // Sort by date desc, then by period order (Morning, Afternoon, Evening)
+        // Determine active period based on current time
+        const now = new Date();
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        let activePeriod = null;
+        if (currentMinutes >= 6 * 60 && currentMinutes <= 12 * 60) {
+            activePeriod = 'morning';
+        } else if (currentMinutes >= 13 * 60 && currentMinutes <= 17 * 60) {
+            activePeriod = 'afternoon';
+        } else if (currentMinutes >= 18 * 60 || currentMinutes <= 5 * 60) {
+            activePeriod = 'evening';
+        }
+
+        // Sort by current period first, then by date desc, then by period order (Morning, Afternoon, Evening)
         currentTimeEntries.sort((a, b) => {
+            // First, prioritize current period
+            const aIsCurrent = a.period.toLowerCase() === activePeriod;
+            const bIsCurrent = b.period.toLowerCase() === activePeriod;
+            if (aIsCurrent && !bIsCurrent) return -1;
+            if (!aIsCurrent && bIsCurrent) return 1;
+
+            // Then by date desc
             const dateA = new Date(a.createdAt);
             const dateB = new Date(b.createdAt);
             if (dateA.getTime() !== dateB.getTime()) {
@@ -857,6 +914,20 @@ function renderTimeEntryCards() {
     }
 
     const entry = currentTimeEntries[currentTimeEntryIndex];
+
+    // Calculate current date and period
+    const now = new Date();
+    const currentDate = now.toISOString().split('T')[0];
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    let currentPeriod = null;
+    if (currentMinutes >= 6 * 60 && currentMinutes <= 12 * 60) {
+        currentPeriod = 'Morning';
+    } else if (currentMinutes >= 13 * 60 && currentMinutes <= 17 * 60) {
+        currentPeriod = 'Afternoon';
+    } else if (currentMinutes >= 18 * 60 || currentMinutes <= 5 * 60) {
+        currentPeriod = 'Evening';
+    }
+
     let dayOfWeek = "N/A";
     if (entry.date) {
         try {
@@ -875,19 +946,19 @@ function renderTimeEntryCards() {
             <div class="grid grid-cols-2 gap-4">
                 <div class="text-center">
                     <p class="text-sm text-gray-500">Date</p>
-                    <p class="text-lg font-medium">${entry.date || "N/A"}</p>
+                    <p class="text-lg font-medium">${entry.date}</p>
                 </div>
                 <div class="text-center">
                     <p class="text-sm text-gray-500">Period</p>
-                    <p class="text-lg font-medium">${entry.period || "N/A"}</p>
+                    <p class="text-lg font-medium">${entry.period}</p>
                 </div>
                 <div class="text-center">
                     <p class="text-sm text-gray-500">Start Time</p>
-                    <p class="text-lg font-medium">${entry.start || "-"}</p>
+                    <p class="text-lg font-medium">${to12Hour(entry.start) || "-"}</p>
                 </div>
                 <div class="text-center">
                     <p class="text-sm text-gray-500">End Time</p>
-                    <p class="text-lg font-medium">${entry.end || "-"}</p>
+                    <p class="text-lg font-medium">${to12Hour(entry.end) || "-"}</p>
                 </div>
                 <div class="text-center">
                     <p class="text-sm text-gray-500">Day</p>
@@ -988,6 +1059,8 @@ async function checkGeofence(roomId = null) {
     const targetRoomId = roomId || activeRoom;
     console.debug("[DEBUG] Target room ID:", targetRoomId);
 
+    const attendanceRoomId = await getAttendanceRoomId(targetRoomId);
+
     // Check if user is a member of the room
     console.log("[TIME_IN] Checking if user is member of room:", targetRoomId);
     const memberDoc = await db.collection("rooms").doc(targetRoomId).collection("members").doc(auth.currentUser.uid).get();
@@ -998,155 +1071,94 @@ async function checkGeofence(roomId = null) {
     }
     console.log("[TIME_IN] User is a member of the room");
 
-    // Fetch schedule from rooms collection
-    let scheduleDoc;
-    try {
-        console.log("[TIME_IN] Fetching schedules for room:", targetRoomId);
-        const entriesSnap = await db.collection("rooms").doc(targetRoomId).collection("schedules").orderBy("createdAt", "desc").get();
-        console.log("[TIME_IN] Fetched", entriesSnap.size, "schedule documents");
-        if (entriesSnap.empty) {
-            console.log("[TIME_IN] No schedule found for this room");
-            showResultMessage("No schedule found for this room.", "error");
-            return;
-        }
-        scheduleDoc = entriesSnap.docs[0]; // take the latest schedule
-        console.log("[TIME_IN] Using schedule doc id:", scheduleDoc.id);
-    } catch (err) {
-        console.error("[TIME_IN] Failed to load schedule:", err);
-        showResultMessage("Failed to load schedule.", "error");
-        return;
-    }
-
-    const schedule = scheduleDoc.data();
-    console.debug("[DEBUG] Schedule data:", schedule);
-
-    // Find today's schedule entry - check if schedule date matches today
-    const today = new Date();
-    const todayDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`; // YYYY-MM-DD format
-    console.debug("[DEBUG] Today's date string:", todayDateStr);
-
-    // Check if schedule is for today
-    if (schedule.date !== todayDateStr) {
-        console.log("[TIME_IN] No schedule defined for today:", todayDateStr, "schedule date:", schedule.date);
-        showResultMessage(`No schedule defined for today (${todayDateStr}).`, "error");
-        return;
-    }
-
-    // Determine which time period is currently active based on current time
+    // Determine active period based on current time
     const now = new Date();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
-
-    let startTime, endTime, activePeriod;
-
-    // Check morning period
-    if (schedule.morningIn && schedule.morningOut) {
-        const [morningStartHour, morningStartMin] = schedule.morningIn.split(":").map(Number);
-        const [morningEndHour, morningEndMin] = schedule.morningOut.split(":").map(Number);
-        const morningStartMinutes = morningStartHour * 60 + morningStartMin;
-        const morningEndMinutes = morningEndHour * 60 + morningEndMin;
-
-        if (currentMinutes >= morningStartMinutes - 120 && currentMinutes <= morningEndMinutes) {
-            startTime = schedule.morningIn;
-            endTime = schedule.morningOut;
-            activePeriod = "morning";
-            console.log(`[TIME_IN] Active period found: morning, current time: ${now.toLocaleTimeString()}, startTime: ${startTime}, endTime: ${endTime}`);
-        }
+    let activePeriod = null;
+    if (currentMinutes >= 6 * 60 && currentMinutes <= 12 * 60) {
+        activePeriod = 'morning';
+    } else if (currentMinutes >= 13 * 60 && currentMinutes <= 17 * 60) {
+        activePeriod = 'afternoon';
+    } else if (currentMinutes >= 18 * 60 || currentMinutes <= 5 * 60) {
+        activePeriod = 'evening';
     }
-
-    // Check afternoon period if morning not active
-    if (!startTime && schedule.afternoonIn && schedule.afternoonOut) {
-        const [afternoonStartHour, afternoonStartMin] = schedule.afternoonIn.split(":").map(Number);
-        const [afternoonEndHour, afternoonEndMin] = schedule.afternoonOut.split(":").map(Number);
-        const afternoonStartMinutes = afternoonStartHour * 60 + afternoonStartMin;
-        const afternoonEndMinutes = afternoonEndHour * 60 + afternoonEndMin;
-
-        if (currentMinutes >= afternoonStartMinutes - 120 && currentMinutes <= afternoonEndMinutes) {
-            startTime = schedule.afternoonIn;
-            endTime = schedule.afternoonOut;
-            activePeriod = "afternoon";
-            console.log(`[TIME_IN] Active period found: afternoon, current time: ${now.toLocaleTimeString()}, startTime: ${startTime}, endTime: ${endTime}`);
-        }
-    }
-
-    // Check evening period if neither morning nor afternoon is active
-    if (!startTime && schedule.eveningIn && schedule.eveningOut) {
-        const [eveningStartHour, eveningStartMin] = schedule.eveningIn.split(":").map(Number);
-        const [eveningEndHour, eveningEndMin] = schedule.eveningOut.split(":").map(Number);
-        const eveningStartMinutes = eveningStartHour * 60 + eveningStartMin;
-        const eveningEndMinutes = eveningEndHour * 60 + eveningEndMin;
-
-        const isWrapAround = eveningEndMinutes < eveningStartMinutes;
-        if (isWrapAround ? (currentMinutes >= eveningStartMinutes - 120 || currentMinutes <= eveningEndMinutes) : (currentMinutes >= eveningStartMinutes - 120 && currentMinutes <= eveningEndMinutes)) {
-            startTime = schedule.eveningIn;
-            endTime = schedule.eveningOut;
-            activePeriod = "evening";
-            console.log(`[TIME_IN] Active period found: evening, current time: ${now.toLocaleTimeString()}, startTime: ${startTime}, endTime: ${endTime}`);
-        }
-    }
-
-    if (!startTime || !endTime) {
+    if (!activePeriod) {
+        console.log(`[TIME_IN] No active period found`);
         console.log(`[TIME_IN] No active time period found, current time: ${now.toLocaleTimeString()}`);
-        showResultMessage("No active schedule period for the current time.", "error");
+        showResultMessage("No active time period for time-in.", "error");
         return;
     }
 
-    console.log(`[TIME_IN] Active period: ${activePeriod}, start: ${startTime}, end: ${endTime}`);
-
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
-    const [startHour, startMin] = startTime.split(":").map(Number);
-    const [endHour, endMin] = endTime.split(":").map(Number);
-    const startMinutes = startHour * 60 + startMin;
-    const earliestAllowedMinutes = startMinutes - 120;
-
-    console.debug(`[DEBUG] Current time in minutes: ${nowMinutes}, earliest allowed: ${earliestAllowedMinutes}`);
-
-    console.log("[TIME_IN] Schedule check passed - user is allowed to time in today");
-
-    console.log("[TIME_IN] Checking location - requesting geolocation");
-    showResultMessage("Checking location", "info");
-
+    // Get current location
     navigator.geolocation.getCurrentPosition(
         async (pos) => {
             const lat = pos.coords.latitude;
             const lng = pos.coords.longitude;
-
-            console.log("[TIME_IN] Geolocation success - position:", { lat, lng });
-
             showCurrentLocationOnMap(lat, lng);
-
             const distance = getDistance(lat, lng, geofenceCenter[0], geofenceCenter[1]);
-            console.log("[TIME_IN] Distance calculated:", distance, "meters (radius:", geofenceRadius, ") - within geofence?", distance <= geofenceRadius);
-
             if (distance <= geofenceRadius) {
-                console.log("[TIME_IN] Inside geofence - proceeding with time-in recording");
-                const mark = nowMinutes > startMinutes ? "Late" : "Present";
+                // Record check in
+                const now = new Date();
+                const todayDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                const scheduleRef = db.collection("rooms").doc(targetRoomId).collection("schedules").doc(auth.currentUser.uid);
+                const scheduleDoc = await scheduleRef.get();
+                let scheduleData = scheduleDoc.exists ? scheduleDoc.data() : { date: todayDateStr, createdAt: new Date() };
+                scheduleData[activePeriod + 'In'] = now.toTimeString().slice(0, 5); // HH:MM
+                scheduleData[activePeriod + 'InCoords'] = { lat, lng };
+                await scheduleRef.set(scheduleData, { merge: true });
 
-                showResultMessage(`Time-in recorded!`, "success");
+                // Query latest attendance event
+                const eventsSnap = await db.collection("rooms").doc(attendanceRoomId).collection("attendanceEvents")
+                    .where("internId", "==", auth.currentUser.uid)
+                    .orderBy("timestamp", "desc")
+                    .limit(1)
+                    .get();
 
-                // Log check-in event
-                await db.collection("rooms").doc(targetRoomId).collection("attendanceEvents").add({
-                    internId: auth.currentUser.uid,
-                    type: "CHECK_IN",
-                    timestamp: new Date(),
-                    locationValid: true,
-                    mark: mark
-                });
-
-                loadTotalHours(targetRoomId);
-                loadHoursLeft(targetRoomId);
-                refreshBtn(targetRoomId);
-
-                if (map) {
-                    if (internMarker) map.removeLayer(internMarker);
-                    internMarker = L.marker([lat, lng]).addTo(map)
-                        .bindPopup("Your Location")
-                        .openPopup();
+                if (!eventsSnap.empty) {
+                    const latestEvent = eventsSnap.docs[0];
+                    const latestData = latestEvent.data();
+                    if (latestData.type === "CHECK_OUT") {
+                        // Update latest CHECK_OUT to CHECK_IN
+                        await latestEvent.ref.update({
+                            type: "CHECK_IN",
+                            timestamp: now,
+                            period: activePeriod
+                        });
+                    } else if (latestData.type === "CHECK_IN" && latestData.period === activePeriod) {
+                        showResultMessage("Already checked in for this period.", "error");
+                        return;
+                    } else {
+                        // Create new CHECK_IN
+                        const attendanceEventRef = db.collection("rooms").doc(attendanceRoomId).collection("attendanceEvents").doc();
+                        await attendanceEventRef.set({
+                            internId: auth.currentUser.uid,
+                            type: "CHECK_IN",
+                            timestamp: now,
+                            period: activePeriod
+                        });
+                    }
+                } else {
+                    // No events, create new CHECK_IN
+                    const attendanceEventRef = db.collection("rooms").doc(attendanceRoomId).collection("attendanceEvents").doc();
+                    await attendanceEventRef.set({
+                        internId: auth.currentUser.uid,
+                        type: "CHECK_IN",
+                        timestamp: now,
+                        period: activePeriod
+                    });
                 }
+
+                showResultMessage("Time-in recorded!", "success");
+                setTimeout(() => {
+                    loadTotalHours(targetRoomId);
+                    loadHoursLeft(targetRoomId);
+                    refreshBtn(targetRoomId);
+                }, 500);
             } else {
-                showResultMessage("You are outside the geofence.", "error");
+                showResultMessage("You are outside the geofence. Cannot time in.", "error");
             }
         },
-        () => {
+        (err) => {
             showResultMessage("Unable to get location.", "error");
         }
     );
@@ -1205,6 +1217,8 @@ async function timeOut() {
         return;
     }
 
+    const attendanceRoomId = await getAttendanceRoomId(activeRoom);
+
     let scheduleDoc;
     try {
         console.log("[TIME_OUT] Fetching schedules for room:", activeRoom);
@@ -1233,71 +1247,74 @@ async function timeOut() {
             const distance = getDistance(lat, lng, geofenceCenter[0], geofenceCenter[1]);
 
             if (distance <= geofenceRadius) {
-                const schedule = scheduleDoc.data();
-                const dayKeys = ["sun","mon","tue","wed","thu","fri","sat"];
-                const todayKey = dayKeys[new Date().getDay()];
-                const todayDateStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
-                const todayTimes = schedule.dailyTimes?.find(t => t.date === todayDateStr);
-
-                if (!todayTimes) {
-                    showResultMessage(`No schedule defined for today (${todayKey.toUpperCase()}).`, "error");
-                    return;
-                }
-
-                const timeOut = new Date();
                 const now = new Date();
-                const [endHour, endMin] = todayTimes.end.split(":").map(Number);
-                const endDateTime = new Date();
-                endDateTime.setHours(endHour, endMin, 0, 0);
+                const todayDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                const scheduleRef = db.collection("rooms").doc(activeRoom).collection("schedules").doc(auth.currentUser.uid);
+                const scheduleDoc = await scheduleRef.get();
+                let scheduleData = scheduleDoc.exists ? scheduleDoc.data() : { date: todayDateStr, createdAt: new Date() };
 
-                let laborExcept = "normal";
-                if (now > endDateTime) {
-                    laborExcept = "overtime";
-                } else if (now < endDateTime) {
-                    laborExcept = "undertime";
-                }
-
-                // Find the last check-in event for duration calculation
-                const eventsSnap = await db.collection("rooms").doc(activeRoom).collection("attendanceEvents")
+                // Query for the latest CHECK_IN event for this intern
+                const eventsSnap = await db.collection("rooms").doc(attendanceRoomId).collection("attendanceEvents")
                     .where("internId", "==", auth.currentUser.uid)
                     .where("type", "==", "CHECK_IN")
                     .orderBy("timestamp", "desc")
                     .limit(1)
                     .get();
 
-                let duration = 0;
                 if (!eventsSnap.empty) {
-                    const checkInTime = eventsSnap.docs[0].data().timestamp.toDate();
-                    duration = (timeOut - checkInTime) / (1000 * 60 * 60); // hours
+                    const eventDoc = eventsSnap.docs[0];
+                    const eventData = eventDoc.data();
+
+                    // Fetch active period from the attendanceEvents document
+                    const activePeriod = eventData.period;
+
+                    console.log("Active period found:", activePeriod);
+
+                    if (!activePeriod) {
+                        showResultMessage("No active time-in to check out from.", "error");
+                        return;
+                    }
+
+                    // Update event to CHECK_OUT
+                    await eventDoc.ref.update({ type: "CHECK_OUT" });
+
+                    scheduleData[activePeriod + 'Out'] = now.toTimeString().slice(0, 5); // HH:MM
+                    scheduleData[activePeriod + 'OutCoords'] = { lat, lng };
+
+                    const inTime = scheduleData[activePeriod + 'In'];
+                    const outTime = scheduleData[activePeriod + 'Out'];
+                    const inMinutes = timeToMinutes(inTime);
+                    const outMinutes = timeToMinutes(outTime);
+                    const duration = (outMinutes - inMinutes) / 60;
+
+                    // Save period total hours
+                    scheduleData[activePeriod + 'TotalHours'] = duration;
+
+                    // Calculate total hours from all periods
+                    let totalHours = 0;
+                    if (scheduleData.morningTotalHours) totalHours += scheduleData.morningTotalHours;
+                    if (scheduleData.afternoonTotalHours) totalHours += scheduleData.afternoonTotalHours;
+                    if (scheduleData.eveningTotalHours) totalHours += scheduleData.eveningTotalHours;
+                    scheduleData.totalHours = totalHours;
+
+                    await scheduleRef.set(scheduleData, { merge: true });
+
+                    // Update progressHours
+                    const internRef = db.collection("rooms").doc(activeRoom).collection("members").doc(auth.currentUser.uid);
+                    await internRef.update({
+                        progressHours: firebase.firestore.FieldValue.increment(duration)
+                    });
+
+                    showResultMessage("Time-out recorded!", "success");
+
+                    setTimeout(() => {
+                        loadTotalHours(activeRoom);
+                        loadHoursLeft(activeRoom);
+                        refreshBtn(activeRoom);
+                    }, 500);
+                } else {
+                    showResultMessage("No active check-in found to check out from.", "error");
                 }
-
-                // Log check-out event
-                await db.collection("rooms").doc(activeRoom).collection("attendanceEvents").add({
-                    internId: auth.currentUser.uid,
-                    type: "CHECK_OUT",
-                    timestamp: timeOut,
-                    duration: duration,
-                    laborExcept: laborExcept
-                });
-
-                // Update intern progressHours and room remainingHours
-                const internRef = db.collection("rooms").doc(activeRoom).collection("members").doc(auth.currentUser.uid);
-                await internRef.update({
-                    progressHours: firebase.firestore.FieldValue.increment(duration)
-                });
-
-                const roomRef = db.collection("rooms").doc(activeRoom);
-                await roomRef.update({
-                    remainingHours: firebase.firestore.FieldValue.increment(-duration)
-                });
-
-                showResultMessage("Time-out recorded!", "success");
-
-                setTimeout(() => {
-                    loadTotalHours(activeRoom);
-                    loadHoursLeft(activeRoom);
-                    refreshBtn(activeRoom);
-                }, 500);
             } else {
                 showResultMessage("You are outside the geofence. Cannot time out.", "error");
             }
@@ -1392,12 +1409,25 @@ async function loadRoomProgress() {
 
                 const roomName = roomData.roomName || "Unnamed Room";
 
-                let totalHours = 0;
-                const entriesSnap = await db.collection("rooms").doc(roomId).collection("schedules").orderBy("createdAt", "desc").get();
-                const scheduleDoc = entriesSnap.docs.find(doc => doc.id === auth.currentUser.uid);
-                if (scheduleDoc) {
-                    totalHours = scheduleDoc.data().totalHours || 0;
+                // Fetch coordinator's full name
+                let coordinatorName = "Unnamed Coordinator";
+                if (roomData.coordinatorEmail) {
+                    try {
+                        const coordSnap = await db.collection("coordinators")
+                            .where("email", "==", roomData.coordinatorEmail)
+                            .limit(1)
+                            .get();
+                        if (!coordSnap.empty) {
+                            const coordData = coordSnap.docs[0].data();
+                            coordinatorName = coordData.fullName || "Unnamed Coordinator";
+                        }
+                    } catch (err) {
+                        console.error("Error fetching coordinator:", err);
+                    }
                 }
+
+                // Use totalHours from roomData instead of schedule
+                const totalHours = roomData.totalHours || 0;
 
                 const progressHours = memberData.progressHours || 0;
                 const progressPercent = totalHours > 0 ? (progressHours / totalHours) * 100 : 0;
@@ -1415,7 +1445,7 @@ async function loadRoomProgress() {
                                 ${progressHours.toFixed(1)} / ${totalHours} hours
                             </div>
                             <div class="text-xs text-gray-400 mt-1">
-                                Room ID: ${roomId}
+                                Coordinator: ${coordinatorName}
                             </div>
                         </div>
                     </div>
@@ -1433,46 +1463,107 @@ async function loadRoomProgress() {
     }
 }
 
+async function getAttendanceRoomId(roomId) {
+    const roomDoc = await db.collection("rooms").doc(roomId).get();
+    if (!roomDoc.exists) {
+        // Find a room with coordinatorEmail
+        const roomsSnap = await db.collection("rooms").where("coordinatorEmail", "!=", null).limit(1).get();
+        if (!roomsSnap.empty) {
+            return roomsSnap.docs[0].id;
+        }
+        return roomId;
+    }
+    const roomData = roomDoc.data();
+    if (roomData.coordinatorEmail) {
+        return roomId;
+    } else {
+        // Find a room with coordinatorEmail
+        const roomsSnap = await db.collection("rooms").where("coordinatorEmail", "!=", null).limit(1).get();
+        if (!roomsSnap.empty) {
+            return roomsSnap.docs[0].id;
+        }
+        return roomId;
+    }
+}
+
 async function refreshBtn(roomId) {
     try {
         if (!roomId) return;
 
-        // Check if there's a recent check-in without check-out
-        const eventsSnap = await db.collection("rooms").doc(roomId).collection("attendanceEvents")
+        console.log("[REFRESH_BTN] Starting refreshBtn for roomId:", roomId, "internId:", auth.currentUser.uid);
+
+        // Determine active period based on current time
+        const now = new Date();
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        let activePeriod = null;
+        if (currentMinutes >= 6 * 60 && currentMinutes <= 12 * 60) {
+            activePeriod = 'morning';
+        } else if (currentMinutes >= 13 * 60 && currentMinutes <= 17 * 60) {
+            activePeriod = 'afternoon';
+        } else if (currentMinutes >= 18 * 60 || currentMinutes <= 3 * 60 + 59) {
+            activePeriod = 'evening';
+        }
+
+        const timeInBtn = document.getElementById("timeInButton");
+        const timeOutBtn = document.getElementById("timeOutButton");
+
+        // Get the correct room ID where attendance events are stored
+        const attendanceRoomId = await getAttendanceRoomId(roomId);
+        console.log("[REFRESH_BTN] doc id before attendance events:", attendanceRoomId);
+
+        // Query for the latest attendance event for this intern
+        const eventsSnap = await db.collection("rooms").doc(attendanceRoomId).collection("attendanceEvents")
             .where("internId", "==", auth.currentUser.uid)
             .orderBy("timestamp", "desc")
             .limit(1)
             .get();
 
-        const timeInBtn = document.getElementById("timeInButton");
-        const timeOutBtn = document.getElementById("timeOutButton");
-
         if (!eventsSnap.empty) {
-            const lastEvent = eventsSnap.docs[0].data();
-            if (lastEvent.type === "CHECK_IN") {
+            const eventDoc = eventsSnap.docs[0];
+            const eventData = eventDoc.data();
+            const eventType = eventData.type;
+
+            console.log("[REFRESH_BTN] Attendance event type:", eventType);
+
+            if (eventType === "CHECK_IN") {
+                // Has check-in, disable timeIn, enable timeOut
                 timeInBtn.disabled = true;
                 timeOutBtn.disabled = false;
                 timeInBtn.style.opacity = 0.5;
                 timeOutBtn.style.opacity = 1;
-            } else {
+                console.log("[REFRESH_BTN] Event is CHECK_IN: timeIn disabled, timeOut enabled");
+            } else if (eventType === "CHECK_OUT") {
+                // Has check-out, disable timeOut, enable timeIn
                 timeInBtn.disabled = false;
                 timeOutBtn.disabled = true;
                 timeInBtn.style.opacity = 1;
                 timeOutBtn.style.opacity = 0.5;
+                console.log("[REFRESH_BTN] Event is CHECK_OUT: timeIn enabled, timeOut disabled");
+            } else {
+                // Unknown type, enable timeIn, disable timeOut
+                timeInBtn.disabled = false;
+                timeOutBtn.disabled = true;
+                timeInBtn.style.opacity = 1;
+                timeOutBtn.style.opacity = 0.5;
+                console.log("[REFRESH_BTN] Unknown event type: timeIn enabled, timeOut disabled");
             }
         } else {
+            // No attendance events, enable timeIn, disable timeOut
             timeInBtn.disabled = false;
             timeOutBtn.disabled = true;
             timeInBtn.style.opacity = 1;
             timeOutBtn.style.opacity = 0.5;
+            console.log("[REFRESH_BTN] No attendance event found: timeIn enabled, timeOut disabled");
+            console.log("[REFRESH_BTN] Fetched attendance events: none");
         }
+
+        console.log("[REFRESH_BTN] Final button states - timeInBtn.disabled:", timeInBtn.disabled, "timeOutBtn.disabled:", timeOutBtn.disabled);
     } catch (error) {
         alert("Error fetching status:" + error);
-        console.log("DEBUG: geofenceSnap empty:", error);
+        console.log("DEBUG: refreshBtn error:", error);
     }
 }
 
-// Mobile menu toggle
 const mobileMenuButton = document.getElementById("mobile-menu-button");
 const overlay = document.getElementById("overlay");
 const menuIcon = document.getElementById("menu-icon");
@@ -1613,6 +1704,11 @@ function backToRooms() {
 }
 
 async function fetchJoinedRooms() {
+    if (!auth.currentUser) {
+        console.error("User not authenticated");
+        return;
+    }
+
     const internRoomsDiv = document.getElementById("internRooms");
     internRoomsDiv.innerHTML = "<p class='text-gray-500'>Loading rooms...</p>";
 
@@ -1865,6 +1961,9 @@ async function setSupervisorZone() {
         await fetchJoinedRooms();
         await checkSupervisorZoneStatus(auth.currentUser);
 
+        // Refresh button states for the supervisor room
+        refreshBtn(roomId);
+
         setZoneStatus.style.color = 'green';
         setZoneStatus.textContent = 'Successfully joined supervisor room and set geofence zone.';
 
@@ -1911,13 +2010,202 @@ async function disconnectSupervisorZone() {
 
         await db.collection("rooms").doc(supervisorRoomId).collection("members").doc(auth.currentUser.uid).delete();
 
-        await checkSupervisorZoneStatus();
+        await checkSupervisorZoneStatus(auth.currentUser);
 
         alert('Successfully disconnected from the supervisor zone.');
     } catch (error) {
         console.error('Error disconnecting from supervisor zone:', error);
         alert('Failed to disconnect from supervisor zone. Please try again.');
     }
+}
+
+async function loadTasks() {
+    if (!auth.currentUser) return;
+
+    try {
+        console.log("Loading tasks for all joined rooms...");
+        const membersSnap = await db.collectionGroup("members").where("internId", "==", auth.currentUser.uid).get();
+        const joinedRooms = [];
+        for (const doc of membersSnap.docs) {
+            const roomId = doc.ref.parent.parent.id;
+            joinedRooms.push(roomId);
+        }
+
+        const taskFilter = document.getElementById("taskFilter");
+        taskFilter.innerHTML = '<option value="all">All Rooms</option>';
+
+        let allTasks = [];
+
+        for (const roomId of joinedRooms) {
+            try {
+                const roomDoc = await db.collection("rooms").doc(roomId).get();
+                if (!roomDoc.exists) continue;
+                const roomData = roomDoc.data();
+                const roomName = roomData.roomName || "Unnamed Room";
+
+                // Add to filter dropdown
+                const option = document.createElement("option");
+                option.value = roomId;
+                option.textContent = roomName;
+                taskFilter.appendChild(option);
+
+                // Load tasks for this room
+                const tasksSnap = await db.collection("rooms").doc(roomId).collection("tasks").get();
+                tasksSnap.forEach((doc) => {
+                    const task = doc.data();
+                    task.roomId = roomId;
+                    task.roomName = roomName;
+                    task.id = doc.id;
+                    allTasks.push(task);
+                });
+            } catch (err) {
+                console.error(`Error loading tasks for room ${roomId}:`, err);
+            }
+        }
+
+        // Store all tasks globally for filtering
+        window.allTasks = allTasks;
+
+        // Add event listener to taskFilter
+        taskFilter.addEventListener('change', filterTasks);
+
+        // Initially render all tasks
+        renderAllTasks();
+
+    } catch (error) {
+        console.error('Error loading tasks:', error);
+        document.getElementById("taskList").innerHTML = "<p class='text-red-500'>❌ Failed to load tasks.</p>";
+    }
+}
+
+function filterTasks() {
+    renderAllTasks();
+}
+
+function renderAllTasks() {
+    const taskFilter = document.getElementById("taskFilter");
+    const selectedRoom = taskFilter.value;
+    let tasksToRender = window.allTasks;
+
+    if (selectedRoom !== 'all') {
+        tasksToRender = window.allTasks.filter(task => task.roomId === selectedRoom);
+    }
+
+    // Group tasks by due date categories
+    const now = new Date();
+    const thisWeekStart = new Date(now);
+    thisWeekStart.setDate(now.getDate() - now.getDay());
+    const thisWeekEnd = new Date(thisWeekStart);
+    thisWeekEnd.setDate(thisWeekStart.getDate() + 6);
+
+    const nextWeekStart = new Date(thisWeekEnd);
+    nextWeekStart.setDate(thisWeekEnd.getDate() + 1);
+    const nextWeekEnd = new Date(nextWeekStart);
+    nextWeekEnd.setDate(nextWeekStart.getDate() + 6);
+
+    const noDueDateTasks = [];
+    const thisWeekTasks = [];
+    const nextWeekTasks = [];
+    const laterTasks = [];
+
+    tasksToRender.forEach(task => {
+        if (!task.dueDate) {
+            noDueDateTasks.push(task);
+        } else {
+            const dueDate = new Date(task.dueDate);
+            if (dueDate >= thisWeekStart && dueDate <= thisWeekEnd) {
+                thisWeekTasks.push(task);
+            } else if (dueDate >= nextWeekStart && dueDate <= nextWeekEnd) {
+                nextWeekTasks.push(task);
+            } else if (dueDate > nextWeekEnd) {
+                laterTasks.push(task);
+            } else {
+                noDueDateTasks.push(task); // Overdue or past
+            }
+        }
+    });
+
+    // Sort tasks within each category
+    noDueDateTasks.sort((a, b) => a.title.localeCompare(b.title));
+    thisWeekTasks.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+    nextWeekTasks.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+    laterTasks.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+
+    // Render tasks in accordions
+    renderTasksInAccordion("noDueDateTasks", noDueDateTasks);
+    renderTasksInAccordion("thisWeekTasks", thisWeekTasks);
+    renderTasksInAccordion("nextWeekTasks", nextWeekTasks);
+    renderTasksInAccordion("laterTasks", laterTasks);
+}
+
+function renderTasksInAccordion(containerId, tasks) {
+    console.log(`[TASK_RENDER] Rendering tasks in container: ${containerId}, total tasks: ${tasks.length}`);
+    try {
+        const container = document.getElementById(containerId);
+        if (tasks.length === 0) {
+            console.log(`[TASK_RENDER] No tasks in category: ${containerId}`);
+            container.innerHTML = "<div class='text-gray-500'>No tasks in this category.</div>";
+            return;
+        }
+
+        container.innerHTML = "";
+        tasks.forEach(task => {
+            console.log(`[TASK_RENDER] Rendering task: ${task.title}, room: ${task.roomName}, due: ${task.dueDate}, id: ${task.id}`);
+            const taskCard = document.createElement("div");
+            taskCard.className = "bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition";
+            taskCard.innerHTML = `
+                <h4 class="text-lg font-semibold text-blue-700 mb-2">${task.title}</h4>
+                <p class="text-gray-600 mb-2">${task.description}</p>
+                <div class="text-sm text-gray-500">
+                    <p>Room: ${task.roomName}</p>
+                    <p>Due: ${task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "No due date"}</p>
+                </div>
+            `;
+            taskCard.addEventListener("click", () => showTaskDetails(task));
+            container.appendChild(taskCard);
+            console.log(`[TASK_RENDER] Appended task card for: ${task.title}`);
+        });
+        console.log(`[TASK_RENDER] Finished rendering ${tasks.length} tasks in ${containerId}`);
+    } catch (error) {
+        console.error(`[TASK_RENDER] Error rendering tasks in container ${containerId}:`, error);
+    }
+}
+
+function showTaskDetails(task) {
+    // Populate task details
+    document.getElementById("taskTitle").textContent = task.title || "Untitled Task";
+    document.getElementById("taskDescription").textContent = task.description || "No description available.";
+    document.getElementById("taskDueDate").textContent = task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "No due date";
+    document.getElementById("taskStatus").textContent = task.status || "Pending";
+    document.getElementById("taskAssignedBy").textContent = task.assignedBy || "Coordinator";
+
+    // Show the task details section
+    document.getElementById("taskDetailsSection").classList.remove("hidden");
+
+    // Hide the task list accordion
+    document.getElementById("taskList").style.display = "none";
+
+    // Hide the task tabs navigation and filter
+    document.getElementById("taskTabsNav").style.display = "none";
+    document.getElementById("taskFilter").style.display = "none";
+
+    // Hide the tab contents
+    document.getElementById("noDueDateTasks").classList.add("hidden");
+    document.getElementById("thisWeekTasks").classList.add("hidden");
+    document.getElementById("nextWeekTasks").classList.add("hidden");
+    document.getElementById("laterTasks").classList.add("hidden");
+}
+
+function backToTasks() {
+    // Hide the task details section
+    document.getElementById("taskDetailsSection").classList.add("hidden");
+
+    // Show the task tabs navigation and filter
+    document.getElementById("taskTabsNav").style.display = "block";
+    document.getElementById("taskFilter").style.display = "block";
+
+    // Show the active tab content, default to noDueDateTasks
+    showTaskTab('noDueDateTasks');
 }
 
 function toggleMapModal() {

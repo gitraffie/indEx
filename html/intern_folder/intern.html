@@ -640,6 +640,7 @@
           <!-- Elements for non-supervisor rooms -->
           <div id="nonSupervisorElements" class="hidden">
             <div id="roomScheduleTable"></div>
+            <ul id="taskList" class="space-y-2 mt-4"></ul>
 
             <p
               id="result"
@@ -684,7 +685,7 @@
             <div class="flex justify-center mb-4 mt-4">
               <button
                 id="timeInButton"
-                onclick="checkGeofence()"
+                onclick="checkGeofence(document.getElementById('roomScheduleContainer').dataset.activeRoom)"
                 class="bg-blue-600 text-white px-6 py-2 rounded-lg shadow hover:bg-blue-700 transition"
                 style="opacity: 1;"
               >
@@ -754,56 +755,76 @@
           <option value="all">All Rooms</option>
         </select>
 
-        <!-- Accordion for Tasks by Due Date -->
-        <div id="taskList" class="space-y-4">
-          <!-- No Due Date -->
-          <div class="accordion-item">
-            <button class="accordion-header w-full text-left p-4 bg-gray-100 hover:bg-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
-              <h3 class="text-lg font-semibold">No Due Date</h3>
-            </button>
-            <div class="accordion-content hidden p-4 bg-white border border-gray-200 rounded-b-lg">
-              <div id="noDueDateTasks" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div class="text-gray-500">No tasks without due date.</div>
-              </div>
+        <!-- Tabs for Tasks by Due Date -->
+        <div>
+          <div>
+            <nav id="taskTabsNav" class="-mb-px flex space-x-12" aria-label="Tabs">
+              <button id="tab-noDueDateTasks" class="tab-button text-gray-500 hover:text-gray-700 whitespace-nowrap py-4 px-4 border-b-2 border-transparent font-medium text-sm" aria-current="page" onclick="showTaskTab('noDueDateTasks')" title="No Due Date">
+                <span>No Due Date</span>
+              </button>
+              <button id="tab-thisWeekTasks" class="tab-button text-gray-500 hover:text-gray-700 whitespace-nowrap py-4 px-4 border-b-2 border-transparent font-medium text-sm" onclick="showTaskTab('thisWeekTasks')" title="This Week">
+                <span>This Week</span>
+              </button>
+              <button id="tab-nextWeekTasks" class="tab-button text-gray-500 hover:text-gray-700 whitespace-nowrap py-4 px-4 border-b-2 border-transparent font-medium text-sm" onclick="showTaskTab('nextWeekTasks')" title="Next Week">
+                <span>Next Week</span>
+              </button>
+              <button id="tab-laterTasks" class="tab-button text-gray-500 hover:text-gray-700 whitespace-nowrap py-4 px-4 border-b-2 border-transparent font-medium text-sm" onclick="showTaskTab('laterTasks')" title="Later">
+                <span>Later</span>
+              </button>
+            </nav>
+          </div>
+
+          <div id="noDueDateTasks" class="tab-content p-4 bg-white rounded-b-lg">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div class="text-gray-500">No tasks without due date.</div>
             </div>
           </div>
 
-          <!-- This Week -->
-          <div class="accordion-item">
-            <button class="accordion-header w-full text-left p-4 bg-gray-100 hover:bg-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
-              <h3 class="text-lg font-semibold">This Week</h3>
-            </button>
-            <div class="accordion-content hidden p-4 bg-white border border-gray-200 rounded-b-lg">
-              <div id="thisWeekTasks" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div class="text-gray-500">No tasks due this week.</div>
-              </div>
+          <div id="thisWeekTasks" class="tab-content hidden p-4 bg-white rounded-b-lg">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div class="text-gray-500">No tasks due this week.</div>
             </div>
           </div>
 
-          <!-- Next Week -->
-          <div class="accordion-item">
-            <button class="accordion-header w-full text-left p-4 bg-gray-100 hover:bg-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
-              <h3 class="text-lg font-semibold">Next Week</h3>
-            </button>
-            <div class="accordion-content hidden p-4 bg-white border border-gray-200 rounded-b-lg">
-              <div id="nextWeekTasks" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div class="text-gray-500">No tasks due next week.</div>
-              </div>
+          <div id="nextWeekTasks" class="tab-content hidden p-4 bg-white rounded-b-lg">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div class="text-gray-500">No tasks due next week.</div>
             </div>
           </div>
 
-          <!-- Later -->
-          <div class="accordion-item">
-            <button class="accordion-header w-full text-left p-4 bg-gray-100 hover:bg-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
-              <h3 class="text-lg font-semibold">Later</h3>
-            </button>
-            <div class="accordion-content hidden p-4 bg-white border border-gray-200 rounded-b-lg">
-              <div id="laterTasks" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div class="text-gray-500">No tasks due later.</div>
-              </div>
+          <div id="laterTasks" class="tab-content hidden p-4 bg-white rounded-b-lg">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div class="text-gray-500">No tasks due later.</div>
             </div>
           </div>
         </div>
+
+        <script>
+          function showTaskTab(tabId) {
+            const tabs = ['noDueDateTasks', 'thisWeekTasks', 'nextWeekTasks', 'laterTasks'];
+            tabs.forEach(id => {
+              const content = document.getElementById(id);
+              const tabButton = document.getElementById('tab-' + id);
+              if (id === tabId) {
+                if (content) content.classList.remove('hidden');
+                if (tabButton) {
+                  tabButton.classList.add('border-blue-600', 'text-blue-600');
+                  tabButton.classList.remove('text-gray-500');
+                }
+              } else {
+                if (content) content.classList.add('hidden');
+                if (tabButton) {
+                  tabButton.classList.remove('border-blue-600', 'text-blue-600');
+                  tabButton.classList.add('text-gray-500');
+                }
+              }
+            });
+          }
+          // Initialize first tab as active
+          document.addEventListener('DOMContentLoaded', () => {
+            showTaskTab('noDueDateTasks');
+          });
+        </script>
 
         <!-- Task Details Section -->
         <div id="taskDetailsSection" class="hidden mt-6 p-6 bg-white border border-gray-200 rounded-lg">
@@ -1021,44 +1042,27 @@
             </div>
           </div>
         </div>
-
-        <!-- Supervisor Information -->
-        <div class="mb-8">
-          <h3 class="text-lg font-semibold mb-4">Supervisor Information</h3>
-          <div class="space-y-2">
-            <p>
-              <strong>Name:</strong> <span id="supervisorName">Loading...</span>
-            </p>
-            <p>
-              <strong>Company:</strong>
-              <span id="supervisorCompany">Loading...</span>
-            </p>
-            <p>
-              <strong>Geofence Center:</strong>
-              <span id="geofenceCoords">Loading...</span>
-            </p>
-          </div>
-        </div>
-
-        <div id="map" class="w-full rounded-xl border shadow mb-6" style="height: 400px;"></div>
       </div>
     </div>
 
     <script src="../../js/auth.js"></script>
     <script src="intern.js"></script>
 
-    <script>
+      <script>
       // Function to show the selected form and hide others
       function showForm(formName) {
           const forms = ['form1', 'form2', 'form3', 'form4', 'form5'];
           forms.forEach(form => {
               const formElement = document.querySelector(`[name="${form}"]`);
               if (form === formName) {
-                formElement.style.display = 'block'; // Show selected form
-                formElement.classList.add('border-b'); // Add border-bottom to active form
+                  formElement.style.display = 'block'; // Show selected form
+                  formElement.classList.add('border-b'); // Add border-bottom to active form
+                if (formName === 'form3') {
+                    loadTasks();
+                }
               } else {
-                formElement.style.display = 'none'; // Hide other forms
-                formElement.classList.remove('border-b'); // Remove border-bottom from inactive forms
+                  formElement.style.display = 'none'; // Hide other forms
+                  formElement.classList.remove('border-b'); // Remove border-bottom from inactive forms
               }
           });
 
@@ -1082,15 +1086,10 @@
               const formName = event.target.closest('a').getAttribute('href').substring(1); // Get form name from href
               showForm(formName); // Show the selected form
 
-        // Load room progress when navigating to form2 (Room Progress Tracking)
-        if (formName === 'form2') {
-            loadRoomProgress();
-        }
-
-        // Load tasks when navigating to form3 (Tasks)
-        if (formName === 'form3') {
-            loadTasks();
-        }
+              // Load room progress when navigating to form2 (Room Progress Tracking)
+              if (formName === 'form2') {
+                  loadRoomProgress();
+              }
           });
       });
     </script>

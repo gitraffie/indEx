@@ -19,5 +19,6 @@
 - [x] Update timeOut function to take the first schedule doc instead of finding by user uid for supervisor rooms.
 - [x] Update loadTotalHours function to handle supervisor rooms by taking the first schedule doc for shared schedules.
 - [x] Verify that loadTotalHours and loadRoomProgress still filter by user uid for non-supervisor rooms.
+- [x] Add debug logging to refreshBtn function for better troubleshooting of button states.
 - [x] Test time in/out functionality in supervisor rooms.
 - [x] Ensure no regressions in non-supervisor room functionalities.
